@@ -115,10 +115,10 @@ panel_configurar() {
     chown -R "$USER:$USER" ~/.config/xfce4-dict 2>/dev/null || true
     find ~/.config/xfce4 -type f -name "*.xml" -exec \
         sed -i "s/ibm-7094a/$USER/g; s/ibm-7094/$USER/g" {} \; 2>/dev/null || true
-    
+
     find ~/.config/xfce4/panel -name "*.desktop" -exec \
     sed -i "s/lukas/$USER/g; s/ibm-7094a/$USER/g; s/ibm-7094/$USER/g" {} \; 2>/dev/null || true
-    
+
     local panel_xml="$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
     pkill -9 xfconfd 2>/dev/null || true; sleep 1
     sed -i 's|<property name="expand" type="bool" value="true"/>|<property name="expand" type="bool" value="false"/>|g; s|<property name="expand" type="empty"/>|<property name="expand" type="bool" value="false"/>|g' "$panel_xml"
@@ -205,6 +205,9 @@ panel_systray_solo_wifi() {
         <value type="string" value="tray.py"/>
         <value type="string" value="applet.py"/>
         <value type="string" value="blueman-tray"/>
+        <value type="string" value="blueman-applet"/>
+        <value type="string" value="blueman applet"/>
+        <value type="string" value="Blueman Applet"/>
         <value type="string" value="clipman"/>
       </property>
       <property name="hidden-items" type="array">
@@ -212,6 +215,9 @@ panel_systray_solo_wifi() {
         <value type="string" value="tray.py"/>
         <value type="string" value="applet.py"/>
         <value type="string" value="blueman-tray"/>
+        <value type="string" value="blueman-applet"/>
+        <value type="string" value="blueman applet"/>
+        <value type="string" value="Blueman Applet"/>
         <value type="string" value="clipman"/>
       </property>
       <property name="known-legacy-items" type="array">
@@ -274,6 +280,9 @@ panel_systray_solo_wifi() {
             -t string -s "tray.py" \
             -t string -s "applet.py" \
             -t string -s "blueman-tray" \
+            -t string -s "blueman-applet" \
+            -t string -s "blueman applet" \
+            -t string -s "Blueman Applet" \
             -t string -s "clipman" \
             2>/dev/null || true
         xfconf-query -c xfce4-panel -p "${base}/hidden-items" \
@@ -282,6 +291,9 @@ panel_systray_solo_wifi() {
             -t string -s "tray.py" \
             -t string -s "applet.py" \
             -t string -s "blueman-tray" \
+            -t string -s "blueman-applet" \
+            -t string -s "blueman applet" \
+            -t string -s "Blueman Applet" \
             -t string -s "clipman" \
             2>/dev/null || true
         xfconf-query -c xfce4-panel -p "${base}/known-legacy-items" \
