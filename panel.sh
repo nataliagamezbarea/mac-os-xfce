@@ -115,6 +115,10 @@ panel_configurar() {
     chown -R "$USER:$USER" ~/.config/xfce4-dict 2>/dev/null || true
     find ~/.config/xfce4 -type f -name "*.xml" -exec \
         sed -i "s/ibm-7094a/$USER/g; s/ibm-7094/$USER/g" {} \; 2>/dev/null || true
+    
+    find ~/.config/xfce4/panel -name "*.desktop" -exec \
+    sed -i "s/lukas/$USER/g; s/ibm-7094a/$USER/g; s/ibm-7094/$USER/g" {} \; 2>/dev/null || true
+    
     local panel_xml="$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
     pkill -9 xfconfd 2>/dev/null || true; sleep 1
     sed -i 's|<property name="expand" type="bool" value="true"/>|<property name="expand" type="bool" value="false"/>|g; s|<property name="expand" type="empty"/>|<property name="expand" type="bool" value="false"/>|g' "$panel_xml"
@@ -124,10 +128,7 @@ panel_configurar() {
     sed -i '/<value type="int" value="10"\/>/d' "$panel_xml"
     grep -q '<value type="int" value="10"/>' "$panel_xml" || \
         sed -i '/<value type="int" value="22"\/>/a\        <value type="int" value="10"/>' "$panel_xml"
-    # Eliminar los 2 plugins a la derecha del systray
     _panel_remove_right_of_systray "$panel_xml"
-    # Los launchers físicos ya vienen del cp -r de ~/ventura-xfce/config/xfce4 al inicio.
-    # NO se borran: son los iconos visibles del panel de Ventura.
     panel_systray_solo_wifi
     info "Configuración del panel copiada"
 }
@@ -142,7 +143,6 @@ _panel_remove_right_of_systray() {
     local count=0
     local to_remove=""
 
-    # Primero encontrar el ID del systray
     systray_id=$(grep -oP '(?<=<property name="plugin-)\d+(?=" type="string" value="systray")' "$xml" | head -1)
     [ -z "$systray_id" ] && { cp "$xml" "$tmp"; rm -f "$xml"; mv "$tmp" "$xml"; return; }
 
@@ -190,31 +190,12 @@ panel_systray_solo_wifi() {
     local panel_xml="$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
     [ -f "$panel_xml" ] || { warn "panel.xml no encontrado"; return; }
 
-    # Eliminar bloques hidden/known/sni sueltos en todo el XML primero
     sed -i '/<property name="hidden-legacy-items" type="array">/,/<\/property>/d' "$panel_xml"
     sed -i '/<property name="hidden-items" type="array">/,/<\/property>/d' "$panel_xml"
     sed -i '/<property name="known-legacy-items" type="array">/,/<\/property>/d' "$panel_xml"
     sed -i '/<property name="known-items" type="array">/,/<\/property>/d' "$panel_xml"
     sed -i '/<property name="hidden-sni-items" type="array">/,/<\/property>/d' "$panel_xml"
 
-    # Eliminar plugin network-manager-xfce / nm-plugin
-    for pid in $(grep -oP '(?<=<property name="plugin-)\d+(?=" type="string" value="(network-manager-xfce|nm-plugin)")' "$panel_xml"); do
-        sed -i "/<value type=\"int\" value=\"$pid\"\/>/d" "$panel_xml"
-        sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"network-manager-xfce\">/,/<\/property>/d" "$panel_xml"
-        sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"nm-plugin\">/,/<\/property>/d" "$panel_xml"
-        sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"network-manager-xfce\"\/>/d" "$panel_xml"
-        sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"nm-plugin\"\/>/d" "$panel_xml"
-        local sids
-        sids=$(grep -oP '(?<=<value type="int" value=")\d+(?="/>)' "$panel_xml" | head -1)
-        for sid in $sids; do
-            sed -i "/<value type=\"int\" value=\"$sid\"\/>/d" "$panel_xml"
-            sed -i "/<property name=\"plugin-$sid\" type=\"string\" value=\"separator\">/,/<\/property>/d" "$panel_xml"
-            sed -i "/<property name=\"plugin-$sid\" type=\"string\" value=\"separator\"\/>/d" "$panel_xml"
-            break
-        done
-    done
-
-    # Ahora reemplazar plugin-10 con los arrays dentro
     local new_plugin10='    <property name="plugin-10" type="string" value="systray">
       <property name="name-visible" type="bool" value="false"/>
       <property name="square-icons" type="bool" value="false"/>
@@ -225,18 +206,17 @@ panel_systray_solo_wifi() {
         <value type="string" value="applet.py"/>
         <value type="string" value="blueman-tray"/>
         <value type="string" value="clipman"/>
-        <value type="string" value="nm-applet"/>
-        <value type="string" value="NetworkManager Applet"/>
       </property>
       <property name="hidden-items" type="array">
         <value type="string" value="mintupdate.py"/>
         <value type="string" value="tray.py"/>
         <value type="string" value="applet.py"/>
         <value type="string" value="blueman-tray"/>
-        <value type="string" value="nm-applet"/>
-        <value type="string" value="NetworkManager Applet"/>
+        <value type="string" value="clipman"/>
       </property>
-      <property name="known-legacy-items" type="array"/>
+      <property name="known-legacy-items" type="array">
+        <value type="string" value="miniaplicación gestor de la red"/>
+      </property>
       <property name="known-items" type="array"/>
     </property>'
 
@@ -270,7 +250,6 @@ panel_systray_solo_wifi() {
     rm -f "$tmp"
     info "plugin-10 systray: arrays hidden OK"
 
-    # Blueman: desactivar autostart
     mkdir -p "$HOME/.config/autostart"
     if [ -f /etc/xdg/autostart/blueman.desktop ]; then
         cp -n /etc/xdg/autostart/blueman.desktop "$HOME/.config/autostart/" 2>/dev/null || true
@@ -278,16 +257,13 @@ panel_systray_solo_wifi() {
     grep -q 'Hidden=true' "$HOME/.config/autostart/blueman.desktop" 2>/dev/null || \
         echo "Hidden=true" >> "$HOME/.config/autostart/blueman.desktop"
 
-    # Matar procesos de bandeja no deseados
     pkill -f mintUpdate          2>/dev/null || true
     pkill -f mintupdate          2>/dev/null || true
     pkill -f applet.py           2>/dev/null || true
     pkill -f tray.py             2>/dev/null || true
     pkill -f blueman-tray        2>/dev/null || true
     pkill -f mintupdate-launcher 2>/dev/null || true
-    pkill -f nm-applet           2>/dev/null || true
 
-    # Forzar via xfconf-query en tiempo de ejecucion
     local systray_id
     systray_id=$(grep -oP '(?<=<property name="plugin-)\d+(?=" type="string" value="systray")' "$panel_xml" | head -1)
     if [ -n "$systray_id" ]; then
@@ -299,8 +275,6 @@ panel_systray_solo_wifi() {
             -t string -s "applet.py" \
             -t string -s "blueman-tray" \
             -t string -s "clipman" \
-            -t string -s "nm-applet" \
-            -t string -s "NetworkManager Applet" \
             2>/dev/null || true
         xfconf-query -c xfce4-panel -p "${base}/hidden-items" \
             --create --force-array \
@@ -308,8 +282,11 @@ panel_systray_solo_wifi() {
             -t string -s "tray.py" \
             -t string -s "applet.py" \
             -t string -s "blueman-tray" \
-            -t string -s "nm-applet" \
-            -t string -s "NetworkManager Applet" \
+            -t string -s "clipman" \
+            2>/dev/null || true
+        xfconf-query -c xfce4-panel -p "${base}/known-legacy-items" \
+            --create --force-array \
+            -t string -s "miniaplicación gestor de la red" \
             2>/dev/null || true
         info "Bandeja oculta (array) aplicada en systray plugin-${systray_id}"
     fi
@@ -342,7 +319,6 @@ panel_reiniciar() {
     local panel_xml="$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
     pkill -9 xfconfd 2>/dev/null || true; sleep 1
     cp ~/ventura-xfce/config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml "$panel_xml"
-    # Los launchers del repo se restauran en panel_reiniciar tras copiar el XML
     sed -i 's|<property name="expand" type="bool" value="true"/>|<property name="expand" type="bool" value="false"/>|g; s|<property name="expand" type="empty"/>|<property name="expand" type="bool" value="false"/>|g' "$panel_xml"
     sed -i 's|<property name="plugin-10" type="string" value="notification-plugin"/>|<property name="plugin-10" type="string" value="systray">\n      <property name="name-visible" type="bool" value="false"/>\n      <property name="square-icons" type="bool" value="false"/>\n      <property name="icon-size" type="int" value="0"/>\n    </property>|' "$panel_xml"
     sed -i '/<value type="int" value="19"\/>/d' "$panel_xml"
@@ -350,14 +326,11 @@ panel_reiniciar() {
     sed -i '/<value type="int" value="10"\/>/d' "$panel_xml"
     grep -q '<value type="int" value="10"/>' "$panel_xml" || \
         sed -i '/<value type="int" value="22"\/>/a\        <value type="int" value="10"/>' "$panel_xml"
-    # Eliminar el launcher y el separador inmediatamente a la derecha de la bandeja de estado
     _panel_remove_right_of_systray "$panel_xml"
-    # Restaurar launchers físicos del repo (los iconos visibles del panel de Ventura).
-    # Se copian de nuevo desde el repo para que el panel los muestre correctamente.
     if [ -d ~/ventura-xfce/config/xfce4/panel ]; then
         cp -r ~/ventura-xfce/config/xfce4/panel/launcher-* ~/.config/xfce4/panel/ 2>/dev/null || true
         find ~/.config/xfce4/panel -name "*.desktop" -exec \
-            sed -i "s/ibm-7094a/$USER/g; s/ibm-7094/$USER/g" {} \; 2>/dev/null || true
+            sed -i "s/lukas/$USER/g; s/ibm-7094a/$USER/g; s/ibm-7094/$USER/g" {} \; 2>/dev/null || true
         local n_launchers
         n_launchers=$(ls -d ~/.config/xfce4/panel/launcher-* 2>/dev/null | wc -l)
         info "Launchers del panel restaurados: $n_launchers"
@@ -369,16 +342,12 @@ panel_reiniciar() {
         sed -i '/<property name="position-locked" type="bool" value="true"\/>/a\      <property name="reserve-space" type="bool" value="true"/>' "$panel_xml"
     asegurar_xfconfd
 
-    # ── CORRECCIÓN CRÍTICA: NO relanzar los procesos no deseados ─────────────
-    # Se elimina: mintupdate-launcher, applet.py y tray.py
-    # Matar cualquier instancia residual antes de arrancar el panel
     pkill -f mintUpdate          2>/dev/null || true
     pkill -f mintupdate          2>/dev/null || true
     pkill -f mintupdate-launcher 2>/dev/null || true
     pkill -f applet.py           2>/dev/null || true
     pkill -f tray.py             2>/dev/null || true
     pkill -f blueman-tray        2>/dev/null || true
-    pkill -f nm-applet           2>/dev/null || true
     sleep 1
 
     DISPLAY="${DISPLAY:-:0}" xfce4-panel & sleep 4
@@ -401,12 +370,11 @@ panel_reiniciar() {
     asegurar_xfconfd
     DISPLAY="${DISPLAY:-:0}" xfce4-panel & sleep 3
 
-    # Asegurar que los procesos no deseados siguen muertos tras el último arranque
     pkill -f mintUpdate          2>/dev/null || true
     pkill -f mintupdate-launcher 2>/dev/null || true
     pkill -f applet.py           2>/dev/null || true
     pkill -f tray.py             2>/dev/null || true
-    pkill -f nm-applet           2>/dev/null || true
+    pkill -f blueman-tray        2>/dev/null || true
 
     pkill -9 xfdesktop 2>/dev/null || true; sleep 2
     xfconf-query -c xsettings -p /Net/IconThemeName -s "$iconos" || true
@@ -447,3 +415,4 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             ;;
     esac
 fi
+
