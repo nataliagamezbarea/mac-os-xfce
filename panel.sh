@@ -63,9 +63,9 @@ EOF
             done
             if [ -z "$sistema" ]; then
                 cp "$archivo" "$HOME/.local/share/applications/${base}.desktop"
-                sed -i "s/ibm-7094a/$USER/g; s/ibm-7094/$USER/g" "$HOME/.local/share/applications/${base}.desktop"
                 sistema="$HOME/.local/share/applications/${base}.desktop"
             fi
+            sed -i "s|lukas|$USER|g; s|ibm-7094a|$USER|g; s|ibm-7094|$USER|g" "$sistema" 2>/dev/null || true
             printf '[PlankDockItemPreferences]\nLauncher=file://%s\n' "$sistema" > "$dockitem"
         done
         find "$lanzadores_destino" -name "*.dockitem" -exec \
@@ -415,4 +415,3 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             ;;
     esac
 fi
-
