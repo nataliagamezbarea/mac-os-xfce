@@ -11,10 +11,17 @@ final_recargar() {
     xfconf-query -c xfwm4 -p /general/title_alignment -s "center"  2>/dev/null || true
 
     # ── 1) Parar TODO lo visual de golpe, sin esperas entre medias ──
-    pkill -9 xfce4-panel 2>/dev/null || true
+    # Forzar cierre de xfdesktop como root y usuario para evitar procesos huérfanos
+    sudo pkill -9 xfdesktop 2>/dev/null || true
     pkill -9 xfdesktop    2>/dev/null || true
+    pkill -9 xfce4-panel 2>/dev/null || true
     pkill -9 plank        2>/dev/null || true
     pkill -9 xfsettingsd  2>/dev/null || true
+    sleep 2
+    
+    # Limpiar sesión guardada de xfdesktop para que no restaure la configuración anterior
+    rm -f ~/.cache/sessions/xfdesktop* 2>/dev/null || true
+    rm -f ~/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml.bak 2>/dev/null || true
 
     # xfwm4 NO se reinicia a propósito: aplica tema y botones en caliente vía
     # xfconf, y un `xfwm4 --replace` con ventanas abiertas corrompe el "tamaño
@@ -28,30 +35,68 @@ final_recargar() {
     xfconf-query -c xsettings -p /Net/ThemeName     -s "$TEMA" 2>/dev/null || true
     xfconf-query -c xsettings -p /Net/IconThemeName -s "$ICONOS" 2>/dev/null || true
 
+    # Forzar idioma español en el entorno gráfico
+    for rc in ~/.xprofile ~/.profile ~/.bashrc; do
+        grep -q 'LANG=es_ES.UTF-8' "$rc" 2>/dev/null || echo 'export LANG=es_ES.UTF-8' >> "$rc"
+        grep -q 'LANGUAGE=es_ES:es' "$rc" 2>/dev/null || echo 'export LANGUAGE=es_ES:es' >> "$rc"
+    done
+    export LANG=es_ES.UTF-8
+    export LANGUAGE=es_ES:es
+
+    # Habilitar menú contextual en el escritorio
+    # Primero asegurar que xfconfd esté corriendo
+    asegurar_xfconfd
+    sleep 1
+    xfconf-query -c xfce4-desktop -p /desktop-icons/style --create -t int -s 2 2>/dev/null || true
+    xfconf-query -c xfce4-desktop -p /context-menu/show-context-menus --create -t bool -s true 2>/dev/null || true
+    xfconf-query -c xfce4-desktop -p /context-menu/show-in-montiores-all-workspaces --create -t bool -s true 2>/dev/null || true
+
+    # Configurar systray para mostrar wifi y bluetooth
+    xfconf-query -c xfce4-panel -p /plugins/plugin-10/known-legacy-items \
+        --create --force-array \
+        -t string -s "miniaplicación gestor de la red" \
+        -t string -s "miniaplicación gestor de bluetooth" \
+        2>/dev/null || true
+    xfconf-query -c xfce4-panel -p /plugins/plugin-10/known-items \
+        --create --force-array \
+        -t string -s "nm-applet" \
+        -t string -s "blueman-applet" \
+        2>/dev/null || true
+    xfconf-query -c xfce4-panel -p /plugins/plugin-10/hidden-items \
+        --create --force-array \
+        -t string -s "mintupdate.py" \
+        -t string -s "tray.py" \
+        -t string -s "applet.py" \
+        -t string -s "clipman" \
+        2>/dev/null || true
+    info "Systray configurado: wifi y bluetooth visibles"
+
     # Re-aplicar wallpaper (el fondo de pantalla) ANTES de arrancar xfdesktop,
     # para que el fondo correcto esté puesto en el momento de pintarlo.
-    local fondo
-    fondo=$(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep -E "last-image|image-path" | head -1 | xargs -r xfconf-query -c xfce4-desktop -p 2>/dev/null || echo "")
-    if [ -n "$fondo" ] && [ -s "$fondo" ]; then
+    # Forzar el fondo de macOS directamente (no depender de xfconf)
+    local fondo=""
+    for f in "$HOME/Pictures/ventura-wallpapers/fondo.jpg" "/usr/share/backgrounds/linuxmint/macos-login.jpg"; do
+        if [ -f "$f" ]; then
+            fondo="$f"
+            break
+        fi
+    done
+    
+    if [ -n "$fondo" ] && [ -f "$fondo" ]; then
+        info "Fondo encontrado: $fondo"
+        # Aplicar el fondo a TODAS las rutas de imagen
         for ruta in $(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep -E "last-image|image-path|last-single-image"); do
             xfconf-query -c xfce4-desktop -p "$ruta" -s "$fondo" 2>/dev/null || true
         done
         for ruta in $(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep image-style); do
             xfconf-query -c xfce4-desktop -p "$ruta" -s 5 2>/dev/null || true
         done
-    else
-        # Fallback: buscar en ubicaciones comunes
-        for f in "$HOME/Pictures/ventura-wallpapers/fondo.jpg" "/usr/share/backgrounds/linuxmint/macos-login.jpg"; do
-            if [ -s "$f" ]; then
-                for ruta in $(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep -E "last-image|image-path|last-single-image"); do
-                    xfconf-query -c xfce4-desktop -p "$ruta" -s "$f" 2>/dev/null || true
-                done
-                for ruta in $(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep image-style); do
-                    xfconf-query -c xfce4-desktop -p "$ruta" -s 5 2>/dev/null || true
-                done
-                break
-            fi
+        # Forzar la propiedad image-show a true
+        for ruta in $(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep image-show); do
+            xfconf-query -c xfce4-desktop -p "$ruta" -s true 2>/dev/null || true
         done
+    else
+        warn "No se encontró fondo de pantalla válido"
     fi
     xfconf-query -c xsettings -p /Net/IconThemeName -s "$ICONOS" 2>/dev/null || true
     aplicar_iconos_persistente "$ICONOS"
@@ -60,8 +105,10 @@ final_recargar() {
     # Los tres se lanzan en el mismo instante (y en segundo plano), con una
     # sola espera al final: el escritorio aparece montado de golpe, sin que
     # la barra llegue segundos antes que el fondo o el dock.
-    DISPLAY="${DISPLAY:-:0}" xfce4-panel >/dev/null 2>&1 &
-    DISPLAY="${DISPLAY:-:0}" xfdesktop    >/dev/null 2>&1 &
+    # Reiniciar componentes como el usuario actual (no como root)
+    export DISPLAY="${DISPLAY:-:0}"
+    setsid xfce4-panel --display="$DISPLAY" >/dev/null 2>&1 & disown
+    setsid xfdesktop --display="$DISPLAY"    >/dev/null 2>&1 & disown
     nohup plank > /tmp/plank.log 2>&1 &
     sleep 4
 

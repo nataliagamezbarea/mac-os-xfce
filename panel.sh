@@ -1,4 +1,5 @@
 #!/bin/bash
+
 DIR=$(cd "$(dirname "$0")" && pwd)
 source "$DIR/comun.sh"
 
@@ -124,6 +125,7 @@ Configura todo el sistema:
 - Safari usando Brave con icono de Safari
 - Gestor wifi al inicio
 - Ocultar gestor de llaves de la bandeja
+- Ocultar los elementos por defecto de la bandeja (NVIDIA Prime, 1Password, mintUpdate)
 
 ### Opciones individuales
 ```bash
@@ -138,6 +140,10 @@ bash panel.sh navegador
 
 # Desactivar el gestor de llaves
 bash panel.sh desactivar-keyring
+
+# Ocultar los elementos por defecto de la bandeja (NVIDIA, 1Password,
+# mintUpdate, clipman, llaves...) y quitar el lanzador Bluetooth duplicado
+bash panel.sh ocultar-elementos
 
 # Crear copia de seguridad de Plank
 bash panel.sh backup
@@ -250,8 +256,8 @@ _panel_arranque_silencioso() {
         local temp_grub="/tmp/grub.tmp"
         if sudo cp "$grub_default" "$temp_grub" 2>/dev/null; then
             # Configurar GRUB para arranque silencioso
-            sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=3 vga=current"/' "$temp_grub"
-            sudo sed -i 's/^GRUB_CMDLINE_LINUX=.*/GRUB_CMDLINE_LINUX="quiet loglevel=3"/' "$temp_grub"
+            sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=3 vga=current"/' "$temp_grub"
+            sed -i 's/^GRUB_CMDLINE_LINUX=.*/GRUB_CMDLINE_LINUX="quiet loglevel=3"/' "$temp_grub"
             
             if sudo mv "$temp_grub" "$grub_default" 2>/dev/null; then
                 info "GRUB configurado para arranque silencioso"
@@ -496,81 +502,13 @@ SETEOF
     info "Launcher 'settings' redirigido a xfce4-settings-manager"
 }
 
-# Crear el icono de Apple para el menú de aplicaciones
-_panel_crear_icono_apple() {
-    local icono_dir="$HOME/.icons/custom"
-    local icono="$icono_dir/apple-logo.svg"
-    mkdir -p "$icono_dir"
-    if [ ! -f "$icono" ]; then
-        cat > "$icono" << 'APPLEEOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512" width="22" height="22">
-  <path fill="currentColor" d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/>
-</svg>
-APPLEEOF
-        info "Icono de Apple creado en $icono"
-    fi
-}
-
-# Insertar un separador expandible después del menú de aplicaciones
-# para que los plugins posteriores se alineen a la derecha
-_panel_separador_appmenu() {
-    local xml="$1"
-    [ -f "$xml" ] || return
-
-    # Crear el icono de Apple si no existe
-    _panel_crear_icono_apple
-
-    # Asegurar que el appmenu tenga el icono de Apple
-    sed -i '/<property name="plugin-2" type="string" value="appmenu">/,/<\/property>/ {
-        /<property name="button-icon"/d
-        s|<property name="plugin-2" type="string" value="appmenu">|<property name="plugin-2" type="string" value="appmenu">\n      <property name="button-icon" type="string" value="apple-logo"/>|
-    }" "$xml"
-
-    # Si ya existe un separador expandible después del appmenu, no hacer nada
-    if grep -A30 'value="appmenu"' "$xml" | grep -q 'value="separator"' && \
-       grep -A35 'value="appmenu"' "$xml" | grep -q 'expand.*true'; then
-        return 0
-    fi
-
-    # Encontrar el número de plugin para el nuevo separador
-    local max_id
-    max_id=$(grep -o '<property name="plugin-[0-9]*"' "$xml" | grep -o '[0-9]*' | sort -n | tail -1)
-    local new_id=$((max_id + 1))
-
-    # Insertar separador expandible después del cierre del plugin appmenu
-    awk -v new_id="$new_id" '
-        /<property name="plugin-2" type="string" value="appmenu">/ { in_appmenu=1 }
-        in_appmenu && /<\/property>/ {
-            print "    <property name=\"plugin-" new_id "\" type=\"string\" value=\"separator\">"
-            print "      <property name=\"expand\" type=\"bool\" value=\"true\"/>"
-            print "      <property name=\"style\" type=\"int\" value=\"0\"/>"
-            print "    </property>"
-            in_appmenu=0
-        }
-        { print }
-    ' "$xml" > "$xml.tmp" && mv "$xml.tmp" "$xml"
-
-    info "Separador expandible insertado después del appmenu (plugin-${new_id})"
-}
-
 _panel_expand_false() {
     local xml="$1"
     [ -f "$xml" ] || return
-    # Forzar expand=false en TODOS los plugins (excepto el separador del appmenu)
-    # Para que los plugins se alineen a la derecha
-    awk '
-        /<property name="plugin-[0-9]+" type="string" value="separator">/ && !done {
-            # Este es el separador después del appmenu, mantener expand=true
-            print
-            getline
-            while ($0 ! /<\/property>/) { print; getline }
-            print
-            done=1
-            next
-        }
-        { print }
-    ' "$xml" > "$xml.tmp" && mv "$xml.tmp" "$xml"
+    sed -i 's|<property name="expand" type="bool" value="true"/>|<property name="expand" type="bool" value="false"/>|g' "$xml"
+    sed -i 's|<property name="expand" type="empty"/>|<property name="expand" type="bool" value="false"/>|g' "$xml"
+    # También corregir expand vacío en elementos individuales
+    sed -i 's|<property name="expand"/>|<property name="expand" type="bool" value="false"/>|g' "$xml"
 }
 
 # Asegurar que el ÚLTIMO separador del panel NO se expanda (evita espacio al final)
@@ -580,7 +518,7 @@ _panel_last_separator_no_expand() {
 
     # Obtener IDs de todos los plugins separadores
     local separator_ids
-    separator_ids=$(grep -o '<property name="plugin-[0-9]*" type="string" value="separator">' "$xml" | sed 's/[^0-9]//g' | sort -n)
+    separator_ids=$(grep -oP '(?<=<property name="plugin-)\d+(?=" type="string" value="separator")' "$xml" | sort -n)
     [ -z "$separator_ids" ] && return
 
     # El último separador (mayor ID) es típicamente el "end spacer"
@@ -1106,6 +1044,15 @@ Categories=Utility;Settings;System;
 StartupNotify=true
 DESKEOF
     chmod +x "$desk"
+    # El appmenu tenía una sección "Plank" que solo enseñaba "Añadir a
+    # Plank": el respaldo tampoco aparecía ahí. Se mete en el menú en
+    # planilla (idempotente) para que se vea en los dos sitios.
+    local menu_plank="$HOME/.config/menus/applications-merged/plank-custom.menu"
+    if [ -f "$menu_plank" ] && ! grep -q "plank-backup.desktop" "$menu_plank"; then
+        if sed -i 's|<Filename>anadir-a-plank.desktop</Filename>|<Filename>anadir-a-plank.desktop</Filename>\n      <Filename>plank-backup.desktop</Filename>|' "$menu_plank" 2>/dev/null; then
+            info "Respaldo añadido a la sección Plank del appmenu"
+        fi
+    fi
     local dock="$HOME/.config/plank/dock1/launchers/plank-backup.dockitem"
     mkdir -p "$(dirname "$dock")"
     printf '[PlankDockItemPreferences]\nLauncher=file://%s\n' "$desk" > "$dock"
@@ -1114,10 +1061,16 @@ DESKEOF
 
 panel_configurar() {
     step "Copiando configuración del panel XFCE"
+    # Si el XML del panel lo escribió root o xfconfd, el cp no puede
+    # sobrescribirlo y xfce4-panel carga el panel POR DEFECTO DE MINT.
+    # Se borran esos ficheros antes de copiar.
+    find ~/.config/xfce4 -user root -type f 2>/dev/null | while read -r f; do
+        sudo rm -f "$f" 2>/dev/null || true
+    done
     cp -r ~/ventura-xfce/config/xfce4 ~/.config/
     cp -r ~/ventura-xfce/config/xfce4-dict ~/.config/ 2>/dev/null || true
-    sudo chown -R "$USER:$USER" ~/.config/xfce4
-    sudo chown -R "$USER:$USER" ~/.config/xfce4-dict 2>/dev/null || true
+    chown -R "$USER:$USER" ~/.config/xfce4
+    chown -R "$USER:$USER" ~/.config/xfce4-dict 2>/dev/null || true
     find ~/.config/xfce4 -type f -name "*.xml" -exec \
         sed -i "s/ibm-7094a/$USER/g; s/ibm-7094/$USER/g" {} \; 2>/dev/null || true
 
@@ -1135,8 +1088,8 @@ panel_configurar() {
         sed -i '/<value type="int" value="22"\/>/a\        <value type="int" value="10"/>' "$panel_xml"
     _panel_remove_right_of_systray "$panel_xml"
     panel_systray_solo_wifi
-    _panel_separador_appmenu "$panel_xml"
     _panel_last_separator_no_expand "$panel_xml"
+    _panel_anadir_area_notificaciones
     info "Configuración del panel copiada"
     
     # Configurar funciones adicionales
@@ -1159,45 +1112,64 @@ _panel_remove_right_of_systray() {
     local to_remove=""
 
     systray_id=$(grep -oP '(?<=<property name="plugin-)\d+(?=" type="string" value="systray")' "$xml" | head -1)
-    [ -z "$systray_id" ] && { cp "$xml" "$tmp"; rm -f "$xml"; mv "$tmp" "$xml"; return; }
+    [ -z "$systray_id" ] && return
 
+    # A la derecha de la bandeja solo se quita lo que NO SIRVE.
+    # Antes se quitaban los 2 primeros sin mirar, y eso se llevo el icono de
+    # volumen (plugin-8, pulseaudio), que funciona y hay que conservar.
+    local pid tipo quitar
     while IFS= read -r line; do
         if echo "$line" | grep -q 'plugin-ids.*array'; then
-            in_ids=1
-            count=0
+            in_ids=1; count=0
+            echo "$line" >> "$tmp"; continue
         fi
         if echo "$line" | grep -q '/property' && [ "$in_ids" -eq 1 ]; then
             in_ids=0
-        fi
-
-        if [ "$in_ids" -eq 1 ] && [ "$count" -gt 0 ] && [ "$count" -le 2 ]; then
-            local pid=$(echo "$line" | grep -oP 'value="\K\d+(?="/>)')
-            if [ -n "$pid" ]; then
-                to_remove="$to_remove $pid"
-                count=$((count + 1))
-                continue
-            fi
+            echo "$line" >> "$tmp"; continue
         fi
 
         if [ "$in_ids" -eq 1 ]; then
-            local curr=$(echo "$line" | grep -oP 'value="\K\d+(?="/>)')
-            if [ "$curr" = "$systray_id" ]; then
-                count=$((count + 1))
+            pid=$(echo "$line" | grep -oP 'value="\K\d+(?="/>)')
+            if [ -n "$pid" ]; then
+                if [ "$count" -eq 0 ]; then
+                    [ "$pid" = "$systray_id" ] && count=1
+                elif [ "$count" -le 2 ]; then
+                    quitar=0
+                    if grep -q "^    <property name=\"plugin-$pid\" type=\"string\" value=\"empty\">$" "$xml"; then
+                        quitar=1
+                    else
+                        tipo=$(grep -oP "(?<=^    <property name=\"plugin-$pid\" type=\"string\" value=\")[^\"]+" "$xml" | head -1)
+                        case "$tipo" in
+                            separator) quitar=1 ;;
+                            launcher)
+                                if [ ! -d "$HOME/.config/xfce4/panel/launcher-$pid" ] \
+                                   && [ ! -d "$HOME/.config/xfce4/panel/launcher-$pid.off" ]; then
+                                    quitar=1
+                                fi ;;
+                        esac
+                    fi
+                    if [ "$quitar" -eq 1 ]; then
+                        to_remove="$to_remove $pid"
+                        count=$((count + 1)); continue
+                    fi
+                    count=$((count + 1))
+                fi
             fi
         fi
-
         echo "$line" >> "$tmp"
     done < "$xml"
 
-    for pid in $to_remove; do
-        sed -i "/<value type=\"int\" value=\"$pid\"\/>/d" "$tmp"
-        sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"separator\">/,/<\/property>/d" "$tmp"
-        sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"launcher\">/,/<\/property>/d" "$tmp"
-        sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"separator\"\/>/d" "$tmp"
-        sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"launcher\"\/>/d" "$tmp"
-    done
-
-    cp "$tmp" "$xml"
+    if [ -n "$to_remove" ]; then
+        for pid in $to_remove; do
+            sed -i "/<value type=\"int\" value=\"$pid\"\/>/d" "$tmp"
+            sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"separator\">/,/<\/property>/d" "$tmp"
+            sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"launcher\">/,/<\/property>/d" "$tmp"
+            sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"separator\"\/>/d" "$tmp"
+            sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"launcher\"\/>/d" "$tmp"
+        done
+        cp "$tmp" "$xml"
+        echo "  [!] fuera de la barra (derecha de la bandeja):$to_remove"
+    fi
     rm -f "$tmp"
 }
 
@@ -1249,6 +1221,55 @@ _panel_last_separator_no_expand() {
     fi
 }
 
+# ── El botón "▶" de la barra (área de notificación) ─────────────────
+# POR QUE: en el XML del repositorio el plugin-10 es `notification-plugin`, que
+# es el botón "▶" de la barra (el que abre la lista de iconos). El sed de
+# panel_configurar/panel_reiniciar lo convertía en `systray`, y con esa
+# conversión el "▶" desaparecía de la barra: por eso se echaba de menos.
+# En XFCE 4.20 los dos PUEDEN convivir: el systray pinta los iconos en línea
+# y el notification-plugin es el botón "▶" que los recoge.
+#
+# OJO: aquí NO se toca el plugin-10. Todo lo demás del script está cableado
+# con el systray SIEMPRE en el 10 (panel_systray_solo_wifi lo reescribe con
+# literales, _panel_remove_right_of_systray y _panel_systray_id lo buscan),
+# así que la bandeja se queda donde está y el "▶" se AÑADE como plugin nuevo
+# justo a su derecha. Se llama al final, después de los demás arreglos, para
+# que ninguno se lo pueda quitar.
+_panel_anadir_area_notificaciones() {
+    local panel_xml="$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+    [ -f "$panel_xml" ] || return
+
+    # Si ya está, no se toca nada (idempotente: se puede llamar cada vez)
+    if grep -q 'value="notification-plugin"' "$panel_xml"; then
+        return 0
+    fi
+
+    # Id libre: el primero a partir del 23 que no exista todavía
+    local id="" n
+    for n in $(seq 23 60); do
+        if ! grep -q "name=\"plugin-$n\"" "$panel_xml"; then id="$n"; break; fi
+    done
+    if [ -z "$id" ]; then
+        warn "area de notificaciones: no hay id de plugin libre"
+        return
+    fi
+
+    # Sin plugin-10 en la lista de la barra no se sabe dónde colocarlo
+    if ! grep -q '<value type="int" value="10"/>' "$panel_xml"; then
+        warn "area de notificaciones: no se encuentra el plugin-10 en plugin-ids"
+        return
+    fi
+
+    # Definir el plugin y ponerlo en la barra, justo a la derecha de la bandeja.
+    # OJO: `0,/.../s///` y no `s///` a secas: el appmenu (plugin-2) tiene su
+    # propio <property name="plugins">, y sin anclar la sustitucion se metia
+    # el plugin dos veces (una dentro del appmenu, donde no cuenta).
+    sed -i "0,\|<property name=\"plugins\" type=\"empty\">|s|<property name=\"plugins\" type=\"empty\">|<property name=\"plugins\" type=\"empty\">\n    <property name=\"plugin-$id\" type=\"string\" value=\"notification-plugin\"/>|" "$panel_xml"
+    sed -i "s|<value type=\"int\" value=\"10\"/>|<value type=\"int\" value=\"10\"/>\n        <value type=\"int\" value=\"$id\"/>|" "$panel_xml"
+
+    info "Boton \">\" (area de notificaciones) anadido como plugin-$id, a la derecha de la bandeja"
+}
+
 panel_systray_solo_wifi() {
     local panel_xml="$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
     [ -f "$panel_xml" ] || { warn "panel.xml no encontrado"; return; }
@@ -1259,32 +1280,52 @@ panel_systray_solo_wifi() {
     sed -i '/<property name="known-items" type="array">/,/<\/property>/d' "$panel_xml"
     sed -i '/<property name="hidden-sni-items" type="array">/,/<\/property>/d' "$panel_xml"
 
+    # BLUETOOTH: no se oculta nada. El icono de la barra lo dibuja
+    # `blueman-tray`; `blueman-applet` es solo el demonio y es el que lo
+    # lanza. Antes se escondía blueman-tray por error (creyendo que era el
+    # duplicado) y por eso no se veía el bluetooth. El duplicado de verdad es
+    # el lanzador "Bluetooth Manager" de la barra, que quita
+    # _panel_quitar_lanzador_bluetooth.
+    # blueman-applet es el que MUESTRA los estados de los dispositivos y tiene
+    # que verse en la bandeja: si se oculta, el icono desaparece de la barra
+    # aunque el proceso esté corriendo (pasaba).
     local new_plugin10='    <property name="plugin-10" type="string" value="systray">
       <property name="name-visible" type="bool" value="false"/>
       <property name="square-icons" type="bool" value="false"/>
       <property name="icon-size" type="int" value="0"/>
       <property name="hidden-legacy-items" type="array">
-        <value type="string" value="mintupdate.py"/>
+        <value type="string" value="mintUpdate.py"/>
         <value type="string" value="tray.py"/>
         <value type="string" value="applet.py"/>
         <value type="string" value="clipman"/>
         <value type="string" value="seahorse"/>
         <value type="string" value="gnome-keyring"/>
         <value type="string" value="keyring"/>
+        <value type="string" value="nvidia-prime"/>
+        <value type="string" value="1password"/>
       </property>
       <property name="hidden-items" type="array">
-        <value type="string" value="mintupdate.py"/>
+        <value type="string" value="mintUpdate.py"/>
         <value type="string" value="tray.py"/>
         <value type="string" value="applet.py"/>
         <value type="string" value="clipman"/>
         <value type="string" value="seahorse"/>
         <value type="string" value="gnome-keyring"/>
         <value type="string" value="keyring"/>
+        <value type="string" value="nvidia-prime"/>
+        <value type="string" value="1password"/>
       </property>
       <property name="known-legacy-items" type="array">
         <value type="string" value="miniaplicación gestor de la red"/>
+        <value type="string" value="nvidia-prime"/>
+        <value type="string" value="1password"/>
+        <value type="string" value="blueman-applet"/>
       </property>
-      <property name="known-items" type="array"/>
+      <property name="known-items" type="array">
+        <value type="string" value="nvidia-prime"/>
+        <value type="string" value="1password"/>
+        <value type="string" value="blueman-applet"/>
+      </property>
     </property>'
 
     local tmp="/tmp/panel_fix_$$.xml"
@@ -1318,13 +1359,13 @@ panel_systray_solo_wifi() {
     info "plugin-10 systray: arrays hidden OK"
 
     mkdir -p "$HOME/.config/autostart"
-    # Crear wrapper de autostart para blueman que espera a que el entorno esté cargado
+    # Autostart de Bluetooth robusto: sin bucle while que puede quedarse pillado
     cat > "$HOME/.config/autostart/blueman.desktop" << 'BLUEMANEOF'
 [Desktop Entry]
 Type=Application
 Name=Bluetooth
 Comment=Gestor de Bluetooth
-Exec=sh -c 'while ! pgrep -x xfce4-panel >/dev/null 2>&1; do sleep 1; done; sleep 2; blueman-applet'
+Exec=bash -c 'sleep 3; blueman-applet'
 Icon=bluetooth-symbolic
 Hidden=false
 NoDisplay=false
@@ -1332,13 +1373,47 @@ X-GNOME-Autostart-enabled=true
 X-MATE-Autostart-enabled=true
 X-Autostart-Priority=1
 BLUEMANEOF
-    info "Bluetooth configurado para cargar después de iniciar sesión (espera a xfce4-panel)"
+    info "Bluetooth configurado para cargar después de iniciar sesión (espera 3s)"
+
+    # Autostart de Plank con prioridad 0 (arranca primero)
+    cat > "$HOME/.config/autostart/plank.desktop" << 'PLANKEOF'
+[Desktop Entry]
+Type=Application
+Name=Plank
+Comment=Dock estilo macOS
+Exec=bash -c 'sleep 1; plank'
+Icon=plank
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+X-MATE-Autostart-enabled=true
+X-Autostart-Priority=0
+PLANKEOF
+    info "Plank configurado con prioridad 0 (arranca primero)"
+
+    # Autostart de Ulauncher con prioridad 2 (arranca después de Bluetooth)
+    cat > "$HOME/.config/autostart/ulauncher.desktop" << 'ULAUNCHEOF'
+[Desktop Entry]
+Type=Application
+Name=Ulauncher
+Comment=Lanzador de aplicaciones
+Exec=bash -c 'sleep 5; ulauncher --hide-window'
+Icon=ulauncher
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+X-MATE-Autostart-enabled=true
+X-Autostart-Priority=2
+ULAUNCHEOF
+    info "Ulauncher configurado con prioridad 2 (arranca después de Bluetooth)"
 
     pkill -f mintUpdate          2>/dev/null || true
     pkill -f mintupdate          2>/dev/null || true
     pkill -f applet.py           2>/dev/null || true
     pkill -f tray.py             2>/dev/null || true
-    pkill -f blueman-tray        2>/dev/null || true
+    # NO se mata blueman-tray: es el que dibuja el icono de bluetooth.
+    # El duplicado era el lanzador "Bluetooth Manager" de la barra, y ese se
+    # quita en _panel_quitar_lanzador_bluetooth.
     pkill -f mintupdate-launcher 2>/dev/null || true
 
     local systray_id
@@ -1347,26 +1422,293 @@ BLUEMANEOF
         local base="/plugins/plugin-${systray_id}"
         xfconf-query -c xfce4-panel -p "${base}/hidden-legacy-items" \
             --create --force-array \
-            -t string -s "mintupdate.py" \
+            -t string -s "mintUpdate.py" \
             -t string -s "tray.py" \
             -t string -s "applet.py" \
             -t string -s "clipman" \
+            -t string -s "seahorse" \
+            -t string -s "gnome-keyring" \
+            -t string -s "keyring" \
+            -t string -s "nvidia-prime" \
+            -t string -s "1password" \
             2>/dev/null || true
         xfconf-query -c xfce4-panel -p "${base}/hidden-items" \
             --create --force-array \
-            -t string -s "mintupdate.py" \
+            -t string -s "mintUpdate.py" \
             -t string -s "tray.py" \
             -t string -s "applet.py" \
             -t string -s "clipman" \
+            -t string -s "seahorse" \
+            -t string -s "gnome-keyring" \
+            -t string -s "keyring" \
+            -t string -s "nvidia-prime" \
+            -t string -s "1password" \
             2>/dev/null || true
+        # known-*: lo que la bandeja ya ha visto. Si blueman-applet no está
+        # aquí, la bandeja ni le reserva hueco y su icono no aparece, aunque
+        # el proceso esté corriendo y no esté en hidden-*.
         xfconf-query -c xfce4-panel -p "${base}/known-legacy-items" \
             --create --force-array \
             -t string -s "miniaplicación gestor de la red" \
+            -t string -s "nvidia-prime" \
+            -t string -s "1password" \
+            -t string -s "blueman-applet" \
+            2>/dev/null || true
+        xfconf-query -c xfce4-panel -p "${base}/known-items" \
+            --create --force-array \
+            -t string -s "nvidia-prime" \
+            -t string -s "1password" \
+            -t string -s "blueman-applet" \
             2>/dev/null || true
         info "Bandeja oculta (array) aplicada en systray plugin-${systray_id}"
     fi
 
     info "Bandeja: solo wifi visible"
+    panel_ocultar_elementos_defecto
+}
+
+# ── ID del plugin de la bandeja (systray) ───────────────────────────
+# Primero pregunta al canal vivo (xfconfd) y, si no está, mira el XML.
+_panel_systray_id() {
+    local id=""
+    if command -v xfconf-query >/dev/null 2>&1; then
+        id=$(xfconf-query -c xfce4-panel -l 2>/dev/null | grep -oE '^/plugins/plugin-[0-9]+$' | cut -d- -f3 | sort -n | while read -r n; do
+            [ "$(xfconf-query -c xfce4-panel -p "/plugins/plugin-$n" 2>/dev/null)" = "systray" ] && { echo "$n"; break; }
+        done)
+    fi
+    [ -z "$id" ] && id=$(grep -oP '(?<=<property name="plugin-)\d+(?=" type="string" value="systray")' \
+        "$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml" 2>/dev/null | head -1)
+    echo "$id"
+}
+
+# ── Ocultar elementos por defecto de la bandeja ──────────────────────
+# La bandeja de XFCE/Mint trae iconos que en este equipo sobran:
+#   nvidia-prime  → solo informativo (cambiar GPU), no aporta nada en la barra
+#   1password     → icono de estado; 1Password ya no se autoinicia
+#   mintUpdate / tray.py / applet.py / clipman / seahorse / gnome-keyring
+# Se ocultan en las DOS listas (hidden-items y hidden-legacy-items) porque un
+# mismo programa puede registrarse como icono antiguo (XEmbed) o como
+# StatusNotifierItem, y cada lista solo oculta el suyo.
+panel_ocultar_elementos_defecto() {
+    local base
+    base=$(_panel_systray_id)
+    if [ -z "$base" ]; then
+        warn "systray no encontrado: no se ocultan los elementos por defecto"
+        return
+    fi
+
+    # BLUETOOTH: no se oculta NADA de bluetooth. El que pinta el icono es
+    # `blueman-tray`, no `blueman-applet`: este ultimo es solo el demonio y
+    # ademas es el que lanza a blueman-tray. Es decir: el icono de la barra
+    # lo dibuja blueman-tray, y antes se estaba escondiendo justo ese
+    # (creyendo que era el duplicado), por eso no se veia el bluetooth.
+    # Solo se repetia el icono porque estaba el lanzador "Bluetooth Manager"
+    # en la barra, y ese ya se quita (ver _panel_quitar_lanzador_bluetooth).
+    #
+    # MINtUpdate: el nombre real del icono es `mintUpdate.py` con mayuscula en
+    # la U. XFCE compara los nombres de la bandeja de forma sensible a
+    # mayusculas, asi que con `mintupdate.py` en minuscula no lo ocultaba
+    # nunca y se veia en la barra.
+    local ocultos=( mintUpdate.py tray.py applet.py clipman seahorse
+                    gnome-keyring keyring nvidia-prime 1password )
+    local args=()
+    local i
+    for i in "${ocultos[@]}"; do args+=( -t string -s "$i" ); done
+
+    local prop
+    for prop in hidden-items hidden-legacy-items; do
+        xfconf-query -c xfce4-panel -p "/plugins/plugin-${base}/${prop}" \
+            --force-array "${args[@]}" 2>/dev/null || true
+    done
+
+    # known-*: los iconos que la bandeja ya ha visto. Si un icono no está en
+    # esta lista, la bandeja NO le reserva hueco y no se dibuja, por mucho que
+    # no esté en hidden-*. Por eso el bluetooth no aparecía: se escondía
+    # blueman-tray (que es el que dibuja) y el que se registraba era
+    # blueman-applet (el demonio, que no dibuja nada). Se registran los dos.
+    for prop in known-items known-legacy-items; do
+        xfconf-query -c xfce4-panel -p "/plugins/plugin-${base}/${prop}" \
+            --create --force-array \
+            -t string -s "nvidia-prime" \
+            -t string -s "1password" \
+            -t string -s "blueman-tray" \
+            -t string -s "blueman-applet" \
+            2>/dev/null || true
+    done
+    info "Bandeja: ${#ocultos[@]} elementos ocultos, bluetooth visible (plugin-$base)"
+
+    _panel_quitar_lanzador_bluetooth
+}
+
+# ── ¿Este lanzador sobra en la barra? ─────────────────────────────────
+# Tres motivos, y los tres se ven igual desde fuera: un icono en la barra
+# que no hace lo que debería.
+#   1) Es el botón "Bluetooth Manager", que duplica el applet de estados.
+#   2) Está ROTO: su .desktop se quedó sin Exec, o con Exec=null. Se ve el
+#      icono, se pulsa y no pasa nada.
+#   3) Le falta la carpeta: el hueco se queda vacío.
+#
+# OJO al reconocer el de Bluetooth: se busca por el .desktop de su carpeta, y
+# al quitarlo esa carpeta se renombra a launcher-<id>.off. Si solo se mira
+# launcher-<id>, la segunda vez ya no existe, no se encuentra nada y el
+# lanzador se queda en la barra para siempre... VACÍO (que es lo que pasaba).
+_panel_lanzador_sobra() {
+    local id="$1" d f ex
+    local hay_carpeta=0
+
+    for d in "$HOME/.config/xfce4/panel/launcher-$id" \
+             "$HOME/.config/xfce4/panel/launcher-$id.off"; do
+        [ -d "$d" ] || continue
+        hay_carpeta=1
+        for f in "$d"/*.desktop; do
+            [ -f "$f" ] || continue
+            grep -qiE '(Exec|Icon|Name)=.*(blueman|bluetooth)' "$f" 2>/dev/null && return 0
+            ex=$(sed -n 's/^Exec=//p' "$f" | head -1)
+            case "$ex" in ''|null|NULL|undefined|None) return 0 ;; esac
+        done
+    done
+
+    # Carpeta perdida: identificar por los .desktop que apunta el plugin
+    for f in $(_panel_lanzador_desktops "$id"); do
+        case "$f" in *blueman*|*bluetooth*|*Blueman*|*Bluetooth*) return 0 ;; esac
+        for d in "$HOME/.config/xfce4/panel/launcher-$id" \
+                 "$HOME/.config/xfce4/panel/launcher-$id.off"; do
+            [ -f "$d/$f" ] || continue
+            grep -qiE 'blueman|bluetooth' "$d/$f" 2>/dev/null && return 0
+            ex=$(sed -n 's/^Exec=//p' "$d/$f" | head -1)
+            case "$ex" in ''|null|NULL|undefined|None) return 0 ;; esac
+        done
+    done
+
+    [ "$hay_carpeta" -eq 0 ] && return 0   # sin carpeta: no se puede dibujar
+    return 1
+}
+
+# .desktop a los que apunta un lanzador: items del XML del panel y del canal vivo
+_panel_lanzador_desktops() {
+    local id="$1"
+    local panel_xml="$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+    if [ -f "$panel_xml" ]; then
+        sed -n "/^    <property name=\"plugin-$id\" type=\"string\" value=\"launcher\">\$/,/^    <\/property>\$/p" \
+            "$panel_xml" | grep -oP '(?<=<value type="string" value=")[^"]+' | tr '\n' ' '
+    fi
+    xfconf-query -c xfce4-panel -p "/plugins/plugin-$id/items" 2>/dev/null \
+        | grep -oP '[A-Za-z0-9_.-]+\.desktop' | tr '\n' ' '
+}
+
+# Ids de lanzadores declarados en un XML del panel
+_panel_xml_lanzadores() {
+    local xml="$1"
+    [ -f "$xml" ] || return
+    sed -n "/^    <property name=\"plugin-\([0-9]\+\)\" type=\"string\" value=\"launcher\">\$/,/^    <\/property>\$/p" \
+        "$xml" | grep -oP '(?<=<property name="plugin-)\d+'
+}
+
+# ¿Es un lanzador? Se mira el canal vivo y, por si está solo en el XML, el archivo
+_panel_es_lanzador() {
+    local id="$1" xml="${2:-}"
+    [ "$(xfconf-query -c xfce4-panel -p "/plugins/plugin-$id" 2>/dev/null)" = "launcher" ] && return 0
+    if [ -n "$xml" ] && [ -f "$xml" ]; then
+        grep -q "^    <property name=\"plugin-$id\" type=\"string\" value=\"launcher\">$" "$xml" && return 0
+        grep -q "^    <property name=\"plugin-$id\" type=\"string\" value=\"launcher\"/>$" "$xml" && return 0
+    fi
+    return 1
+}
+
+# ── Fuera de la barra los lanzadores que sobran ───────────────────────
+# El applet de Bluetooth (el que SÍ muestra los estados de los dispositivos)
+# ya está en la bandeja, así que el botón "Bluetooth Manager" que había al
+# lado es el mismo bluetooth duplicado: se abre el gestor a mano, sobra.
+#
+# Se limpian los XML (el de la sesión y el del repo) porque panel_configurar
+# copia el del repo en cada ejecución: si no, volvían el de Bluetooth y el
+# de Wi-Fi roto. Y las carpetas se renombran a .off, nunca se borran, por si
+# un día se quieren recuperar.
+_panel_quitar_lanzador_bluetooth() {
+    command -v xfconf-query >/dev/null 2>&1 || return
+    local panel_dir="$HOME/.config/xfce4/panel"
+    local panel_xml="$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+    local repo_xml="$HOME/ventura-xfce/config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+    local ids id quitar=() nuevos=() restaurar=() args=()
+    local mirar=() vistos=()
+
+    ids=$(xfconf-query -c xfce4-panel -p /panels/panel-1/plugin-ids 2>/dev/null | grep -E '^[0-9]+$')
+
+    # 1) Todos los lanzadores a mirar: los de la barra viva y los que solo
+    #    quedan en un XML (si no, los del repo no se limpian nunca).
+    for id in $ids; do mirar+=( "$id" ); done
+    for f in "$panel_xml" "$repo_xml"; do
+        for id in $(_panel_xml_lanzadores "$f"); do mirar+=( "$id" ); done
+    done
+
+    for id in "${mirar[@]}"; do
+        case " ${vistos[*]} " in *" $id "*) continue ;; esac
+        vistos+=( "$id" )
+        _panel_es_lanzador "$id" "$repo_xml" || _panel_es_lanzador "$id" "$panel_xml" || continue
+        if _panel_lanzador_sobra "$id"; then
+            quitar+=( "$id" )
+        elif [ ! -d "$panel_dir/launcher-$id" ] && [ -d "$panel_dir/launcher-$id.off" ]; then
+            restaurar+=( "$id" )
+        fi
+    done
+
+    # 2) Restaurar los que solo estaban renombrados
+    for id in "${restaurar[@]}"; do
+        mv -f "$panel_dir/launcher-$id.off" "$panel_dir/launcher-$id" 2>/dev/null || true
+    done
+    [ "${#restaurar[@]}" -gt 0 ] && info "Barra: ${#restaurar[@]} lanzador(es) restaurados de su copia .off"
+
+    # 3) Fuera del canal vivo: de plugin-ids y de la lista de plugins
+    if [ "${#quitar[@]}" -gt 0 ]; then
+        for id in $ids; do
+            case " ${quitar[*]} " in *" $id "*) continue ;; esac
+            nuevos+=( "$id" )
+        done
+        args=()
+        for id in "${nuevos[@]}"; do args+=( -t int -s "$id" ); done
+        xfconf-query -c xfce4-panel -p /panels/panel-1/plugin-ids --force-array "${args[@]}" 2>/dev/null || true
+        for id in "${quitar[@]}"; do
+            xfconf-query -c xfce4-panel -p "/plugins/plugin-$id" -r 2>/dev/null || true
+            # Renombrar a .off SOLO si la carpeta normal existe. Si ya estaba
+            # renombrada, un rm previo se comería la única copia que queda y el
+            # lanzador se perdería para siempre (pasó: la 2ª ejecución borró el
+            # .off antes de que el mv pudiera renombrarlo).
+            if [ -d "$panel_dir/launcher-$id" ]; then
+                rm -rf "$panel_dir/launcher-$id.off"
+                mv "$panel_dir/launcher-$id" "$panel_dir/launcher-$id.off" 2>/dev/null || true
+            fi
+        done
+        info "Barra: fuera ${#quitar[@]} lanzador(es) sobrante(s) (plugin-${quitar[*]})"
+    fi
+
+    # 4) Y fuera de los dos XML
+    for f in "$panel_xml" "$repo_xml"; do
+        _panel_xml_quitar_lanzadores "$f" "${quitar[*]}"
+    done
+}
+
+# Borrar del XML del panel los plugins dados: su valor en plugin-ids y su
+# bloque. Los bloques se cierran con </property> a la MISMA sangría (4
+# espacios): sin ese ancla el sed para en el </property> interno del array
+# "items" y deja el cierre huérfano (XML roto).
+_panel_xml_quitar_lanzadores() {
+    local xml="$1" ids="$2" id tmp
+    [ -f "$xml" ] || return
+    [ -n "$ids" ] || return
+    tmp="/tmp/panel_lanz_$$.xml"
+    cp "$xml" "$tmp"
+    for id in $ids; do
+        sed -i "\|<value type=\"int\" value=\"$id\"/>|d" "$tmp"
+        sed -i "/^    <property name=\"plugin-$id\" type=\"string\" value=\"launcher\">\$/,/^    <\/property>\$/d" "$tmp"
+        sed -i "/^    <property name=\"plugin-$id\" type=\"empty\">\$/,/^    <\/property>\$/d" "$tmp"
+        sed -i "\|^    <property name=\"plugin-$id\" type=\"string\" value=\"launcher\"/>$|d" "$tmp"
+    done
+    if cmp -s "$tmp" "$xml"; then
+        rm -f "$tmp"
+    else
+        mv "$tmp" "$xml"
+        info "Barra: lanzadores sobrantes fuera del XML $(basename "$xml")"
+    fi
 }
 
 _panel_aplicar_colores() {
@@ -1460,10 +1802,10 @@ panel_reiniciar() {
         warn "Carpeta de launchers del repo no encontrada — los iconos del panel pueden faltar"
     fi
     panel_systray_solo_wifi
-    _panel_separador_appmenu "$panel_xml"
     grep -q 'reserve-space' "$panel_xml" 2>/dev/null || \
         sed -i '/<property name="position-locked" type="bool" value="true"\/>/a\      <property name="reserve-space" type="bool" value="true"/>' "$panel_xml"
     _panel_last_separator_no_expand "$panel_xml"
+    _panel_anadir_area_notificaciones
     _panel_aplicar_colores
     asegurar_xfconfd
 
@@ -1472,7 +1814,9 @@ panel_reiniciar() {
     pkill -f mintupdate-launcher 2>/dev/null || true
     pkill -f applet.py           2>/dev/null || true
     pkill -f tray.py             2>/dev/null || true
-    pkill -f blueman-tray        2>/dev/null || true
+    # NO se mata blueman-tray: es el que dibuja el icono de bluetooth.
+    # El duplicado era el lanzador "Bluetooth Manager" de la barra, y ese se
+    # quita en _panel_quitar_lanzador_bluetooth.
     sleep 1
 
     DISPLAY="${DISPLAY:-:0}" xfce4-panel >/dev/null 2>&1 & sleep 4
@@ -1498,7 +1842,9 @@ panel_reiniciar() {
     pkill -f mintupdate-launcher 2>/dev/null || true
     pkill -f applet.py           2>/dev/null || true
     pkill -f tray.py             2>/dev/null || true
-    pkill -f blueman-tray        2>/dev/null || true
+    # NO se mata blueman-tray: es el que dibuja el icono de bluetooth.
+    # El duplicado era el lanzador "Bluetooth Manager" de la barra, y ese se
+    # quita en _panel_quitar_lanzador_bluetooth.
 
     # ── FONDO + BARRA + PLANK A LA VEZ ───────────────────────────────
     # Se paran los tres, se aplican los ajustes y se lanzan JUNTOS (y en
@@ -1524,10 +1870,79 @@ panel_reiniciar() {
     nohup plank > /tmp/plank.log 2>&1 &
     sleep 5
 
+    # La bandeja se ha perdido: hay que rehacerla
+    _panel_reiniciar_bandeja
+
     pkill -9 xfconfd 2>/dev/null || true; sleep 1
     sed -i 's|<property name="expand" type="bool" value="true"/>|<property name="expand" type="bool" value="false"/>|g; s|<property name="expand" type="empty"/>|<property name="expand" type="bool" value="false"/>|g' "$panel_xml"
     asegurar_xfconfd
     info "Panel y escritorio reiniciados"
+}
+
+# ── Que los iconos de la bandeja vuelvan a verse ─────────────────────
+# Por qué: al reiniciar el panel (xfce4-panel -r) se destruye la ventana del
+# systray, y los iconos de bandeja que ya estaban embebidos se quedan HUÉRFANOS
+# colgados de la raíz. En el árbol X se ven así:
+#     0x3000001 "blueman-applet"  10x10+10+10   <- huérfano, sin hijo embebido
+#     0x10000b5 "nm-applet"       16x16+0+0  +1603+5   <- bien embebido
+# Es decir: el proceso sigue vivo pero su icono ya no se dibuja, y por eso
+# "la red sale muy tarde" o directamente no sale. Peor: como el systray
+# nuevo sí recoge tray.py (que debe estar oculto), sale EN SU LUGAR.
+#
+# Solución: matar esos programas y volver a lanzarlos, ya con el systray
+# nuevo delante, para que se embutan de nuevo.
+_panel_reiniciar_bandeja() {
+    local d="${DISPLAY:-:0}"
+    # Los que duplican o sobran, primero: no queremos reaparezcan
+    # blueman-tray se queda: es el que pinta el icono (ver arriba).
+    pkill -x tray.py       2>/dev/null || true
+    pkill -x mintUpdate.py 2>/dev/null || true
+    sleep 1
+
+    local app
+    for app in nm-applet blueman-applet; do
+        pgrep -x "$app" >/dev/null 2>&1 && continue
+        DISPLAY="$d" setsid "$app" >/dev/null 2>&1 &
+        sleep 2
+    done
+
+    # Que el systray se dé cuenta de los iconos nuevos
+    local base
+    base=$(_panel_systray_id)
+    if [ -n "$base" ]; then
+        xfconf-query -c xfce4-panel -p "/plugins/plugin-${base}/known-legacy-items" \
+            --create --force-array \
+            -t string -s "miniaplicación gestor de la red" \
+            -t string -s "nvidia-prime" \
+            -t string -s "1password" \
+            -t string -s "blueman-applet" 2>/dev/null || true
+        xfconf-query -c xfce4-panel -p "/plugins/plugin-${base}/known-items" \
+            --create --force-array \
+            -t string -s "nvidia-prime" \
+            -t string -s "1password" \
+            -t string -s "blueman-applet" 2>/dev/null || true
+    fi
+    sleep 2
+
+    # Comprobación: si algún icono sigue huérfano, se reinicia otra vez
+    local iconos
+    iconos=$(xwininfo -root -children -tree 2>/dev/null | grep -cE '"(nm-applet|blueman-applet)"')
+    if [ "${iconos:-0}" -gt 0 ]; then
+        pkill -x nm-applet 2>/dev/null || true
+        pkill -x blueman-applet 2>/dev/null || true
+        sleep 2
+        for app in nm-applet blueman-applet; do
+            DISPLAY="$d" setsid "$app" >/dev/null 2>&1 &
+            sleep 2
+        done
+    fi
+
+    local faltan=""
+    for app in nm-applet blueman-applet; do
+        pgrep -x "$app" >/dev/null 2>&1 || faltan="$faltan $app"
+    done
+    [ -n "$faltan" ] && warn "Bandeja: no arrancó$faltan" \
+                     || info "Bandeja: iconos de red y bluetooth re-embebidos"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -1547,6 +1962,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         backup)    _panel_fix_launcher_plank_backup ;;
         navegador)  _panel_fix_brave_desktop; _panel_fix_launcher_safari ;;
         desactivar-keyring) _panel_desactivar_gestor_llaves ;;
+        ocultar-elementos)   panel_ocultar_elementos_defecto ;;
         reiniciar) panel_reiniciar "$ICONOS" "$TEMA" "$TEMA_XFWM" ;;
         todo)
             panel_configurar
@@ -1555,4 +1971,3 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             ;;
     esac
 fi
-

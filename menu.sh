@@ -177,6 +177,28 @@ fi
 
 bash "$DIR/panel.sh" "$MODO" reiniciar
 
+# Re-aplicar fondo de escritorio (por si xfdesktop se ha reiniciado)
+# Forzar cierre de xfdesktop como root y usuario para evitar procesos huérfanos
+sudo pkill -9 xfdesktop 2>/dev/null || true
+pkill -9 xfdesktop 2>/dev/null || true
+sleep 2
+
+fondo_aplicado=$(xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/workspace0/last-image 2>/dev/null)
+if [ -n "$fondo_aplicado" ] && [ -f "$fondo_aplicado" ]; then
+    for ruta in $(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep -E "last-image|image-path|last-single-image"); do
+        xfconf-query -c xfce4-desktop -p "$ruta" -s "$fondo_aplicado" 2>/dev/null || true
+    done
+    for ruta in $(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep image-style); do
+        xfconf-query -c xfce4-desktop -p "$ruta" -s 5 2>/dev/null || true
+    done
+    # Reiniciar xfdesktop como el usuario actual con DISPLAY correcta
+    export DISPLAY="${DISPLAY:-:0}"
+    sudo pkill -9 xfdesktop 2>/dev/null; pkill -9 xfdesktop 2>/dev/null; sleep 2; DISPLAY=:0 setsid xfdesktop --display=:0 >/dev/null 2>&1 & disown; sleep 3
+    info "Fondo de escritorio re-aplicado"
+else
+    warn "No se pudo leer el fondo aplicado desde xfconf"
+fi
+
 # Forzar decoraciones CSD macOS ANTES de relanzar Nautilus
 export GTK_CSD=1
 gsettings set org.gnome.desktop.wm.preferences button-layout 'close,minimize,maximize:' 2>/dev/null || true

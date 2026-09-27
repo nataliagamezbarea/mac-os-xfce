@@ -187,7 +187,10 @@ lightdm_fondo() {
 lightdm_aplicar_fondo() {
     local fondo="$1"
     [ -s "$fondo" ] || { warn "Fondo no encontrado"; return; }
-    pkill -9 xfdesktop 2>/dev/null || true; sleep 2
+    # Forzar cierre de xfdesktop como root y usuario para evitar procesos huérfanos
+    sudo pkill -9 xfdesktop 2>/dev/null || true
+    pkill -9 xfdesktop 2>/dev/null || true
+    sleep 2
     asegurar_xfconfd; sleep 1
 
     # Detectar TODOS los monitores disponibles (incluyendo nombres complejos)
@@ -232,7 +235,11 @@ lightdm_aplicar_fondo() {
 
     xfconf-query -c xsettings -p /Net/IconThemeName -s "$ICONOS" 2>/dev/null || true
     aplicar_iconos_persistente "$ICONOS"
-    sleep 2; DISPLAY="${DISPLAY:-:0}" xfdesktop >/dev/null 2>&1 & sleep 3
+    # Reiniciar xfdesktop como el usuario actual con DISPLAY correcta
+    export DISPLAY="${DISPLAY:-:0}"
+    setsid xfdesktop --display="$DISPLAY" >/dev/null 2>&1 &
+    disown
+    sleep 3
     info "Fondo de pantalla aplicado"
 
     sudo mkdir -p /usr/share/backgrounds/linuxmint
