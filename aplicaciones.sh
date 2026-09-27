@@ -195,33 +195,13 @@ EOF
     done
     xfconf-query -c xfce4-session -p /sessions/Failsafe/Count -s 5 2>/dev/null || true
 
+    # Plank y red NO se lanzan por autostart de XFCE: lo hace el
+    # session-setup-script de lightdm (lightdm_dock_temprano), que espera
+    # a que xfdesktop y xfce4-panel estén listos. Crear .desktop aquí
+    # causaría duplicados.
     rm -f ~/.config/autostart/plank.desktop
-    cat > ~/.config/autostart/00-plank.desktop << 'EOF'
-[Desktop Entry]
-Type=Application
-Name=Plank
-Comment=Dock
-Exec=sh -c 'pgrep -x plank >/dev/null 2>&1 || exec plank'
-Icon=plank
-Terminal=false
-Hidden=false
-StartupNotify=false
-X-GNOME-Autostart-enabled=true
-X-Autostart-Priority=0
-EOF
-    cat > ~/.config/autostart/00-red.desktop << 'EOF'
-[Desktop Entry]
-Type=Application
-Name=Gestor de red
-Comment=Red
-Exec=sh -c 'pgrep -x nm-applet >/dev/null 2>&1 || exec nm-applet'
-Icon=nm-applet
-Terminal=false
-Hidden=false
-StartupNotify=false
-X-GNOME-Autostart-enabled=true
-X-Autostart-Priority=0
-EOF
+    rm -f ~/.config/autostart/00-plank.desktop
+    rm -f ~/.config/autostart/00-red.desktop
 
     # NOTA: ya NO se genera xfdesktop-restart.desktop. Ese autostart lanzaba un
     # segundo xfdesktop en cada login (el de la sesión + este), haciendo que el
@@ -243,33 +223,61 @@ Hidden=true
 X-GNOME-Autostart-enabled=false
 EOF
 
-    # ── Miniaplicación de red (nm-applet): arranque automático ──
-    cat > ~/.config/autostart/nm-applet.desktop << 'EOF'
+    # ── Desactivar autostart del sistema que causa duplicados ──
+    # /etc/xdg/autostart/nm-applet.desktop y /etc/xdg/autostart/blueman.desktop
+    # lanzan estos procesos al arrancar la sesión, pero como ya los lanza el
+    # session-setup-script de lightdm, se duplicados. Se desactivan directamente.
+    if [ -f /etc/xdg/autostart/nm-applet.desktop ]; then
+        sudo tee /etc/xdg/autostart/nm-applet.desktop >/dev/null << 'EOF'
 [Desktop Entry]
 Type=Application
-Name=Gestor de red
-Comment=Miniaplicación de red
-Exec=nm-applet
-Icon=network-wireless-symbolic
-Hidden=false
-StartupNotify=false
-X-GNOME-Autostart-enabled=true
-X-Autostart-Priority=1
+Name=NetworkManager Applet
+Hidden=true
+X-GNOME-Autostart-enabled=false
 EOF
-    
-    # ── Bluetooth (blueman-applet): arranque automático temprano ──
+        info "nm-applet del sistema desactivado (sin duplicados)"
+    fi
+    if [ -f /etc/xdg/autostart/blueman.desktop ]; then
+        sudo tee /etc/xdg/autostart/blueman.desktop >/dev/null << 'EOF'
+[Desktop Entry]
+Type=Application
+Name=Blueman Applet
+Hidden=true
+X-GNOME-Autostart-enabled=false
+EOF
+        info "blueman del sistema desactivado (sin duplicados)"
+    fi
+
+    # ── Prioridades de carga ──
+    # La barra del panel (xfce4-panel) y el escritorio (xfdesktop) cargan
+    # primero (prioridad 0), luego plank (prioridad 1), luego ulauncher
+    # (prioridad 2), y finalmente el resto de aplicaciones (prioridad 3+).
+    # Esto asegura que todo aparezca en el orden correcto.
+    # NOTA: Plank NO se lanza desde aquí: lo hace el session-setup-script de
+    # lightdm (lightdm_dock_temprano), que espera a que xfdesktop y xfce4-panel
+    # estén listos. Crear un .desktop aquí causaría duplicados.
+    mkdir -p ~/.config/autostart
+
+    # Ulauncher: prioridad 2 (carga después de plank)
+    # Ya se crea su propio .desktop en aplicaciones_ulauncher(); aquí solo se
+    # asegura que tenga la prioridad correcta si existe.
+    if [ -f ~/.config/autostart/ulauncher.desktop ]; then
+        grep -q '^X-Autostart-Priority=' ~/.config/autostart/ulauncher.desktop || \
+            echo "X-Autostart-Priority=2" >> ~/.config/autostart/ulauncher.desktop
+    fi
+
+    # Bluetooth (blueman-applet): prioridad 3 (carga después de ulauncher)
+    # Se anula el autostart del sistema (Hidden=true) para evitar duplicados.
+    # El session-setup-script de lightdm lo lanza con la prioridad correcta.
     cat > ~/.config/autostart/blueman-applet.desktop << 'EOF'
 [Desktop Entry]
 Type=Application
-Name=Bluetooth
-Comment=Gestor de Bluetooth
-Exec=blueman-applet
-Icon=bluetooth-symbolic
-Hidden=false
-StartupNotify=false
-X-GNOME-Autostart-enabled=true
-X-Autostart-Priority=2
+Name=Bluetooth Manager
+Hidden=true
+X-GNOME-Autostart-enabled=false
 EOF
+
+    info "Prioridades: panel(0) > plank(1, desde lightdm) > ulauncher(2) > blueman(3, desde lightdm)"
     
     # ── 1Password: NO se inicia nunca ─────────────────────────────────
     # 1Password se auto-instala su propio .desktop de autostart cada vez que

@@ -91,35 +91,31 @@ lightdm_dock_temprano() {
     sudo mkdir -p "$dir"
     sudo tee "$script" >/dev/null << 'SEOF'
 #!/bin/sh
-# Lo ejecuta lightdm como el usuario justo antes de arrancar la sesion, con
-# DISPLAY y XAUTHORITY ya puestas. Aqui se adelanta el dock para que aparezca
-# con el fondo y la barra, en vez de 8 s despues (detras ya de la red).
-#
-# OJO: plank NO se puede lanzar a pelo aqui. A este punto todavia no existe el
-# bus de la sesion, y plank lee sus ajustes por gsettings/dconf: sin bus se
-# queda con los valores por defecto (dock sin tema y sin lanzadores) y luego el
-# `pgrep` del autostart lo daria por bueno, asi que el dock salia "vacio" y
-# no se arreglaba solo. Por eso se espera a que aparezca el bus (unos 200 ms)
-# y se le pasa la direccion: lightdm no pone DBUS_SESSION_BUS_ADDRESS, y sin
-# esa variable dconf se inventaria un bus propio y no guardaria los cambios.
-#
-# El pgrep evita un segundo dock. Y si el bus no llega en 10 s, se lanza
-# igual: mas vale un dock con los ajustes por defecto que ningun dock.
-(
-    i=0
-    while [ "$i" -lt 50 ]; do
-        if [ -n "$DBUS_SESSION_BUS_ADDRESS" ] || [ -S "/run/user/$(id -u)/bus" ]; then
-            break
-        fi
-        i=$((i + 1))
-        sleep 0.2
-    done
-    if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && [ -S "/run/user/$(id -u)/bus" ]; then
-        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
-        export DBUS_SESSION_BUS_ADDRESS
+# Lo ejecuta lightdm como el usuario justo antes de arrancar la sesion.
+# Lanza TODOS los procesos SIMULTÁNEAMENTE para que todo aparezca a la vez.
+
+# Esperar solo 0.5s a que el bus de sesión esté disponible
+i=0
+while [ "$i" -lt 5 ]; do
+    if [ -n "$DBUS_SESSION_BUS_ADDRESS" ] || [ -S "/run/user/$(id -u)/bus" ]; then
+        break
     fi
-    pgrep -x plank >/dev/null 2>&1 || plank >/dev/null 2>&1
-) >/dev/null 2>&1 &
+    i=$((i + 1))
+    sleep 0.1
+done
+
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && [ -S "/run/user/$(id -u)/bus" ]; then
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+    export DBUS_SESSION_BUS_ADDRESS
+fi
+
+# Lanzar TODOS los procesos SIMULTÁNEAMENTE (sin esperar entre ellos)
+pgrep -x plank >/dev/null 2>&1 || setsid plank >/dev/null 2>&1 &
+pgrep -x nm-applet >/dev/null 2>&1 || setsid nm-applet >/dev/null 2>&1 &
+pgrep -x blueman-applet >/dev/null 2>&1 || setsid blueman-applet >/dev/null 2>&1 &
+pgrep -x xfce4-panel >/dev/null 2>&1 || setsid xfce4-panel >/dev/null 2>&1 &
+pgrep -x xfdesktop >/dev/null 2>&1 || setsid xfdesktop >/dev/null 2>&1 &
+
 exit 0
 SEOF
     sudo chmod 0755 "$script"
@@ -132,6 +128,28 @@ SEOF
     sudo sed -i '/^session-setup-script=/d' /etc/lightdm/lightdm.conf.d/99-macos-greeter.conf 2>/dev/null || true
 
     info "Dock adelantado al inicio de sesion (session-setup-script)"
+
+    # ── Anular los autostart del sistema que causan duplicados ──
+    # /etc/xdg/autostart/nm-applet.desktop y /etc/xdg/autostart/blueman.desktop
+    # lanzan estos procesos al arrancar la sesión, pero como ya los lanza el
+    # session-setup-script, se duplican. Se crean archivos del usuario con
+    # Hidden=true para anularlos.
+    mkdir -p "$HOME/.config/autostart"
+    cat > "$HOME/.config/autostart/nm-applet.desktop" << 'EOF'
+[Desktop Entry]
+Type=Application
+Name=NetworkManager Applet
+Hidden=true
+X-GNOME-Autostart-enabled=false
+EOF
+    cat > "$HOME/.config/autostart/blueman.desktop" << 'EOF'
+[Desktop Entry]
+Type=Application
+Name=Bluetooth Manager
+Hidden=true
+X-GNOME-Autostart-enabled=false
+EOF
+    info "Autostart del sistema anulados (sin duplicados)"
 }
 
 lightdm_fondo() {
