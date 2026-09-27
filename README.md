@@ -57,8 +57,9 @@ sudo sed -i 's/^HandleLidSwitchExternalPower=.*/HandleLidSwitchExternalPower=sus
 > una sola vez al final, justo antes de empezar los pasos.
 > **Compositor**: no hay `picom`; el compositor es el de `xfwm4`
 > (`use_compositing=true`), que es lo que había antes y no ralentiza nada.
-> El dock (Plank) y el fondo entran por el autostart normal de XFCE
-> (`Phase=Initialization`), sin hooks ni envoltorios.
+> El fondo entra por el autostart normal de XFCE y el dock (Plank) por el
+> `session-setup-script` de LightDM, que es lo único que llega **antes** de que
+> empiece la sesión (ver "El dock salía 8 s tarde" en la tabla de abajo).
 
 ## Arranque sin pantalla negra (lo hace `optimizar.sh boot` automáticamente)
 ```bash
@@ -101,11 +102,14 @@ sudo update-grub
 | Lanzador en la barra que no hacía nada (Wi-Fi) | `panel_ocultar_elementos_defecto()` quita los lanzadores con `Exec` vacío o `Exec=null`, y los que se quedan sin carpeta (el hueco vacío de la barra) |
 | El lanzador de Bluetooth volvía a salir en cada `panel.sh config` | Se limpian los dos XML del panel: el de la sesión y el de `~/ventura-xfce`, que es el que se copia. Antes solo se limpiaba el primero |
 | El lanzador de Bluetooth salía vacío en la barra | Al reconocerlo se miran las dos carpetas (`launcher-<id>` y `launcher-<id>.off`). Si solo se mira la primera, la segunda ejecución ya no la encuentra y no lo quita nunca |
-| El dock (Plank) aparecía 8 s tarde, después de la barra | El autostart de XFCE sale en un solo lote a los +11 s y a los +2/+3 s solo arrancan los clientes de la sesión `Failsafe`, **compilados en el binario** (añadirlos en xfconf no sirve: comprobado). `lightdm_dock_temprano()` usa `session-setup-script` de lightdm, que se ejecuta como el usuario justo antes de que arranque la sesión, y adelanta el dock allí |
+| El dock (Plank) aparecía 8 s tarde, después de la barra | El autostart de XFCE sale en un solo lote a los +11 s y a los +2/+3 s solo arrancan los clientes de la sesión `Failsafe`, **compilados en el binario** (añadirlos en xfconf no sirve: comprobado). `lightdm_dock_temprano()` usa `session-setup-script` de lightdm, que se ejecuta como el usuario justo antes de que arranque la sesión, y adelanta el dock allí. Espera además a que aparezca el bus de la sesión antes de lanzarlo: plank lee sus ajustes por gsettings/dconf y sin bus se quedaría con los valores por defecto (dock sin tema y sin lanzadores) |
+| Los arreglos del login y del dock se perdían al ejecutar el script | `lightdm_aplicar_fondo()` reescribía entero `99-macos-greeter.conf` con un `tee` y se llevaba por delante el `greeter-setup-script` y el `session-setup-script` que se acababan de registrar. Como `menu.sh` llama a `lightdm.sh lightdm` y después a `lightdm.sh wallpaper`, al terminar ambos ajustes estaban borrados: el login en frío volvía a quedar negro y el dock a salir a los +11 s. **Cada ajuste va ahora en su propio drop-in**: `98-macos-pantallas.conf` y `98-macos-dock.conf`, y el 99 solo se toca para su línea del greeter |
+| Los clientes de la sesión `Failsafe` que se probaron seguían escritos en `xfce4-session.xml` | `aplicaciones_autostart()` los borra (Client5/Client6, plank y nm-applet sin `pgrep`) y deja `Count=5`, que son los clientes compilados. No se ejecutan nunca, pero si llegaran a ejecutarse la segunda vez matarían el dock del `session-setup-script` |
 | Los iconos de la bandeja desaparecen al reiniciar la barra | Al reiniciar el panel se destruye la ventana del systray y los iconos embebidos quedan **huérfanos**: el proceso sigue vivo pero ya no dibuja nada. `_panel_reiniciar_bandeja()` los relanza con el systray nuevo delante |
 | El `slick-greeter.conf` "de usuario" no hacía nada | El greeter lo arranca lightdm como **root**, así que su `$HOME` es `/root`: el fichero en `/home/<usuario>/.config/` no lo leía nunca. Ahora se escribe también en `/root/.config/` |
 | El login se ve al cambiar de usuario y al suspender, pero al encender no | El X del greeter es una instancia aparte, sin `xfce4-power-manager` que le quite el DPMS, y la pantalla no da EDID. `lightdm_pantallas_encendidas()` registra un `greeter-setup-script` que hace `xset -dpms` antes de arrancar el greeter, igual que ya hacía el hook de `resume` |
 | El login salía **vacío** al encender el ordenador | `optimizar.sh` enmascaraba `accounts-daemon` para ahorrar milisegundos, pero lightdm lo necesita para la lista de usuarios: `Error getting user list from org.freedesktop.Accounts: ...UnitMasked`. Al cambiar de usuario o al suspender el greeter cae a la lista de PAM y por eso se veía bien. **Ya no se enmascara** |
+| El icono de volumen desaparecía de la barra | `_panel_remove_right_of_systray()` quitaba **a ciegas** los 2 plugins de la derecha de la bandeja, y se llevaba `plugin-8` (pulseaudio). Ahora solo quita lo que no sirve: separadores sobrantes, plugins vacíos y lanzadores rotos. `pulseaudio`, `power-manager` y los relojes se conservan |
 | El icono de Bluetooth no salía en la barra | El que dibuja el icono es `blueman-tray`, no `blueman-applet`: este último es solo el demonio y es el que lo lanza. Se estaba escondiendo justo el que dibuja. Además `blueman-applet` se registra como StatusNotifierItem y el systray de XFCE solo repinta esos iconos al reiniciar la barra |
 
 ### Ver errores del arranque

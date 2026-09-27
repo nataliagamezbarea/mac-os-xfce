@@ -54,12 +54,20 @@ exit 0
 GREEOF
     sudo chmod 0755 "$script"
 
-    # Registrarlo en el drop-in 99, que ya fija el greeter
-    local dropin="/etc/lightdm/lightdm.conf.d/99-macos-greeter.conf"
+    # OJO: cada ajuste va en SU PROPIO drop-in, no todos en el 99.
+    # lightdm_aplicar_fondo reescribia entero el 99-macos-greeter.conf (con un
+    # `tee`) para fijar el greeter, y al hacerlo se llevaba por delante el
+    # greeter-setup-script y el session-setup-script que lightdm_configurar
+    # acababa de registrar dos lineas antes. Como menu.sh llama a
+    # `lightdm.sh lightdm` y despues a `lightdm.sh wallpaper`, al terminar
+    # quedaban los dos ajustes borrados: el login en frio se volvia a quedar
+    # negro y el dock volvia a salir a los +11 s. Con un fichero por ajuste
+    # esto ya no puede pasar (y el 99 solo se toca para su linea del greeter).
+    local dropin="/etc/lightdm/lightdm.conf.d/98-macos-pantallas.conf"
     sudo mkdir -p /etc/lightdm/lightdm.conf.d
-    sudo touch "$dropin"
-    sudo sed -i '/^greeter-setup-script=/d' "$dropin"
-    printf 'greeter-setup-script=%s\n' "$script" | sudo tee -a "$dropin" >/dev/null
+    printf '[Seat:*]\ngreeter-setup-script=%s\n' "$script" | sudo tee "$dropin" >/dev/null
+    # Limpiar la copia vieja que quedo en el 99 (si la hubiera)
+    sudo sed -i '/^greeter-setup-script=/d' /etc/lightdm/lightdm.conf.d/99-macos-greeter.conf 2>/dev/null || true
 
     info "Pantalla del login: siempre encendida (greeter-setup-script)"
 }
@@ -85,19 +93,43 @@ lightdm_dock_temprano() {
 #!/bin/sh
 # Lo ejecuta lightdm como el usuario justo antes de arrancar la sesion, con
 # DISPLAY y XAUTHORITY ya puestas. Aqui se adelanta el dock para que aparezca
-# junto con el fondo y la barra, en vez de 8 s despues.
-# El pgrep evita un segundo dock: si ya corre, no hace nada. Y si falla, el
-# .desktop de autostart lo lanza igualmente mas tarde.
-pgrep -x plank >/dev/null 2>&1 || plank >/dev/null 2>&1 &
+# con el fondo y la barra, en vez de 8 s despues (detras ya de la red).
+#
+# OJO: plank NO se puede lanzar a pelo aqui. A este punto todavia no existe el
+# bus de la sesion, y plank lee sus ajustes por gsettings/dconf: sin bus se
+# queda con los valores por defecto (dock sin tema y sin lanzadores) y luego el
+# `pgrep` del autostart lo daria por bueno, asi que el dock salia "vacio" y
+# no se arreglaba solo. Por eso se espera a que aparezca el bus (unos 200 ms)
+# y se le pasa la direccion: lightdm no pone DBUS_SESSION_BUS_ADDRESS, y sin
+# esa variable dconf se inventaria un bus propio y no guardaria los cambios.
+#
+# El pgrep evita un segundo dock. Y si el bus no llega en 10 s, se lanza
+# igual: mas vale un dock con los ajustes por defecto que ningun dock.
+(
+    i=0
+    while [ "$i" -lt 50 ]; do
+        if [ -n "$DBUS_SESSION_BUS_ADDRESS" ] || [ -S "/run/user/$(id -u)/bus" ]; then
+            break
+        fi
+        i=$((i + 1))
+        sleep 0.2
+    done
+    if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && [ -S "/run/user/$(id -u)/bus" ]; then
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+        export DBUS_SESSION_BUS_ADDRESS
+    fi
+    pgrep -x plank >/dev/null 2>&1 || plank >/dev/null 2>&1
+) >/dev/null 2>&1 &
 exit 0
 SEOF
     sudo chmod 0755 "$script"
 
-    local dropin="/etc/lightdm/lightdm.conf.d/99-macos-greeter.conf"
+    # Fichero propio: el 99-macos-greeter.conf es del wallpaper (lightdm_aplicar_fondo)
+    local dropin="/etc/lightdm/lightdm.conf.d/98-macos-dock.conf"
     sudo mkdir -p /etc/lightdm/lightdm.conf.d
-    sudo touch "$dropin"
-    sudo sed -i '/^session-setup-script=/d' "$dropin"
-    printf 'session-setup-script=%s\n' "$script" | sudo tee -a "$dropin" >/dev/null
+    printf '[Seat:*]\nsession-setup-script=%s\n' "$script" | sudo tee "$dropin" >/dev/null
+    # Limpiar la copia vieja que quedo en el 99 (si la hubiera)
+    sudo sed -i '/^session-setup-script=/d' /etc/lightdm/lightdm.conf.d/99-macos-greeter.conf 2>/dev/null || true
 
     info "Dock adelantado al inicio de sesion (session-setup-script)"
 }
@@ -225,10 +257,15 @@ draw-grid=false
 SEOF
     # El greeter fijo en 99: gana a 60-lightdm-gtk-greeter y 90-slick-greeter,
     # asi la pantalla de inicio no cambia sola al actualizar paquetes.
-    sudo tee /etc/lightdm/lightdm.conf.d/99-macos-greeter.conf >/dev/null << 'SEOF'
-[Seat:*]
-greeter-session=slick-greeter
-SEOF
+    # OJO: se TOCA solo la linea del greeter, no se reescribe el fichero entero.
+    # Con un `tee` completo se borraban los demas ajustes registrados ahi
+    # (pantalla encendida y dock temprano), que viven ahora en 98-macos-*.conf.
+    local dropin99="/etc/lightdm/lightdm.conf.d/99-macos-greeter.conf"
+    sudo mkdir -p /etc/lightdm/lightdm.conf.d
+    sudo touch "$dropin99"
+    sudo sed -i '/^greeter-session=/d' "$dropin99"
+    grep -q '^\[Seat:\*\]' "$dropin99" 2>/dev/null || printf '[Seat:*]\n' | sudo tee -a "$dropin99" >/dev/null
+    printf 'greeter-session=slick-greeter\n' | sudo tee -a "$dropin99" >/dev/null
     sudo mkdir -p /etc/lightdm/lightdm-gtk-greeter.conf.d
     sudo tee /etc/lightdm/lightdm-gtk-greeter.conf.d/99_linuxmint.conf >/dev/null << 'SEOF'
 [Greeter]

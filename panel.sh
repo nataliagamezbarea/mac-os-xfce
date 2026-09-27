@@ -1083,6 +1083,7 @@ panel_configurar() {
     _panel_remove_right_of_systray "$panel_xml"
     panel_systray_solo_wifi
     _panel_last_separator_no_expand "$panel_xml"
+    _panel_anadir_area_notificaciones
     info "Configuración del panel copiada"
     
     # Configurar funciones adicionales
@@ -1105,45 +1106,64 @@ _panel_remove_right_of_systray() {
     local to_remove=""
 
     systray_id=$(grep -oP '(?<=<property name="plugin-)\d+(?=" type="string" value="systray")' "$xml" | head -1)
-    [ -z "$systray_id" ] && { cp "$xml" "$tmp"; rm -f "$xml"; mv "$tmp" "$xml"; return; }
+    [ -z "$systray_id" ] && return
 
+    # A la derecha de la bandeja solo se quita lo que NO SIRVE.
+    # Antes se quitaban los 2 primeros sin mirar, y eso se llevo el icono de
+    # volumen (plugin-8, pulseaudio), que funciona y hay que conservar.
+    local pid tipo quitar
     while IFS= read -r line; do
         if echo "$line" | grep -q 'plugin-ids.*array'; then
-            in_ids=1
-            count=0
+            in_ids=1; count=0
+            echo "$line" >> "$tmp"; continue
         fi
         if echo "$line" | grep -q '/property' && [ "$in_ids" -eq 1 ]; then
             in_ids=0
-        fi
-
-        if [ "$in_ids" -eq 1 ] && [ "$count" -gt 0 ] && [ "$count" -le 2 ]; then
-            local pid=$(echo "$line" | grep -oP 'value="\K\d+(?="/>)')
-            if [ -n "$pid" ]; then
-                to_remove="$to_remove $pid"
-                count=$((count + 1))
-                continue
-            fi
+            echo "$line" >> "$tmp"; continue
         fi
 
         if [ "$in_ids" -eq 1 ]; then
-            local curr=$(echo "$line" | grep -oP 'value="\K\d+(?="/>)')
-            if [ "$curr" = "$systray_id" ]; then
-                count=$((count + 1))
+            pid=$(echo "$line" | grep -oP 'value="\K\d+(?="/>)')
+            if [ -n "$pid" ]; then
+                if [ "$count" -eq 0 ]; then
+                    [ "$pid" = "$systray_id" ] && count=1
+                elif [ "$count" -le 2 ]; then
+                    quitar=0
+                    if grep -q "^    <property name=\"plugin-$pid\" type=\"string\" value=\"empty\">$" "$xml"; then
+                        quitar=1
+                    else
+                        tipo=$(grep -oP "(?<=^    <property name=\"plugin-$pid\" type=\"string\" value=\")[^\"]+" "$xml" | head -1)
+                        case "$tipo" in
+                            separator) quitar=1 ;;
+                            launcher)
+                                if [ ! -d "$HOME/.config/xfce4/panel/launcher-$pid" ] \
+                                   && [ ! -d "$HOME/.config/xfce4/panel/launcher-$pid.off" ]; then
+                                    quitar=1
+                                fi ;;
+                        esac
+                    fi
+                    if [ "$quitar" -eq 1 ]; then
+                        to_remove="$to_remove $pid"
+                        count=$((count + 1)); continue
+                    fi
+                    count=$((count + 1))
+                fi
             fi
         fi
-
         echo "$line" >> "$tmp"
     done < "$xml"
 
-    for pid in $to_remove; do
-        sed -i "/<value type=\"int\" value=\"$pid\"\/>/d" "$tmp"
-        sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"separator\">/,/<\/property>/d" "$tmp"
-        sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"launcher\">/,/<\/property>/d" "$tmp"
-        sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"separator\"\/>/d" "$tmp"
-        sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"launcher\"\/>/d" "$tmp"
-    done
-
-    cp "$tmp" "$xml"
+    if [ -n "$to_remove" ]; then
+        for pid in $to_remove; do
+            sed -i "/<value type=\"int\" value=\"$pid\"\/>/d" "$tmp"
+            sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"separator\">/,/<\/property>/d" "$tmp"
+            sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"launcher\">/,/<\/property>/d" "$tmp"
+            sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"separator\"\/>/d" "$tmp"
+            sed -i "/<property name=\"plugin-$pid\" type=\"string\" value=\"launcher\"\/>/d" "$tmp"
+        done
+        cp "$tmp" "$xml"
+        echo "  [!] fuera de la barra (derecha de la bandeja):$to_remove"
+    fi
     rm -f "$tmp"
 }
 
@@ -1193,6 +1213,55 @@ _panel_last_separator_no_expand() {
         fi
         info "Último separador (plugin-$last_sep_id) forzado a no expandir"
     fi
+}
+
+# ── El botón "▶" de la barra (área de notificación) ─────────────────
+# POR QUE: en el XML del repositorio el plugin-10 es `notification-plugin`, que
+# es el botón "▶" de la barra (el que abre la lista de iconos). El sed de
+# panel_configurar/panel_reiniciar lo convertía en `systray`, y con esa
+# conversión el "▶" desaparecía de la barra: por eso se echaba de menos.
+# En XFCE 4.20 los dos PUEDEN convivir: el systray pinta los iconos en línea
+# y el notification-plugin es el botón "▶" que los recoge.
+#
+# OJO: aquí NO se toca el plugin-10. Todo lo demás del script está cableado
+# con el systray SIEMPRE en el 10 (panel_systray_solo_wifi lo reescribe con
+# literales, _panel_remove_right_of_systray y _panel_systray_id lo buscan),
+# así que la bandeja se queda donde está y el "▶" se AÑADE como plugin nuevo
+# justo a su derecha. Se llama al final, después de los demás arreglos, para
+# que ninguno se lo pueda quitar.
+_panel_anadir_area_notificaciones() {
+    local panel_xml="$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+    [ -f "$panel_xml" ] || return
+
+    # Si ya está, no se toca nada (idempotente: se puede llamar cada vez)
+    if grep -q 'value="notification-plugin"' "$panel_xml"; then
+        return 0
+    fi
+
+    # Id libre: el primero a partir del 23 que no exista todavía
+    local id="" n
+    for n in $(seq 23 60); do
+        if ! grep -q "name=\"plugin-$n\"" "$panel_xml"; then id="$n"; break; fi
+    done
+    if [ -z "$id" ]; then
+        warn "area de notificaciones: no hay id de plugin libre"
+        return
+    fi
+
+    # Sin plugin-10 en la lista de la barra no se sabe dónde colocarlo
+    if ! grep -q '<value type="int" value="10"/>' "$panel_xml"; then
+        warn "area de notificaciones: no se encuentra el plugin-10 en plugin-ids"
+        return
+    fi
+
+    # Definir el plugin y ponerlo en la barra, justo a la derecha de la bandeja.
+    # OJO: `0,/.../s///` y no `s///` a secas: el appmenu (plugin-2) tiene su
+    # propio <property name="plugins">, y sin anclar la sustitucion se metia
+    # el plugin dos veces (una dentro del appmenu, donde no cuenta).
+    sed -i "0,\|<property name=\"plugins\" type=\"empty\">|s|<property name=\"plugins\" type=\"empty\">|<property name=\"plugins\" type=\"empty\">\n    <property name=\"plugin-$id\" type=\"string\" value=\"notification-plugin\"/>|" "$panel_xml"
+    sed -i "s|<value type=\"int\" value=\"10\"/>|<value type=\"int\" value=\"10\"/>\n        <value type=\"int\" value=\"$id\"/>|" "$panel_xml"
+
+    info "Boton \">\" (area de notificaciones) anadido como plugin-$id, a la derecha de la bandeja"
 }
 
 panel_systray_solo_wifi() {
@@ -1691,6 +1760,7 @@ panel_reiniciar() {
     grep -q 'reserve-space' "$panel_xml" 2>/dev/null || \
         sed -i '/<property name="position-locked" type="bool" value="true"\/>/a\      <property name="reserve-space" type="bool" value="true"/>' "$panel_xml"
     _panel_last_separator_no_expand "$panel_xml"
+    _panel_anadir_area_notificaciones
     _panel_aplicar_colores
     asegurar_xfconfd
 

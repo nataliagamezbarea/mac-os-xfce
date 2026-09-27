@@ -175,12 +175,26 @@ EOF
     # LA VIA QUE SI LLEGA: `session-setup-script` de lightdm. Se ejecuta como
     # el usuario, con DISPLAY ya puesto, JUSTO antes de que arranque la sesion:
     # es el unico sitio que llega antes que xfce4-session. Desde ahi se lanza el
-    # dock, y asi aparece con el fondo y la barra en vez de 8 s despues.
-    # El .desktop de autostart se queda de red de seguridad, con pgrep para no
-    # lanzar un segundo dock.
+    # dock, y asi aparece con el fondo y la barra en vez de 8 s despues y por
+    # detras de la red (lo escribe lightdm.sh, en lightdm_dock_temprano).
     # Los .desktop de autostart se quedan como RED DE SEGURIDAD: si algún día
     # la sesión no arrancara, el dock y la red aparecen igual. El `pgrep` evita
     # lanzar un segundo (haría parpadear el dock a los +11 s).
+
+    # Limpiar los clientes de la sesion Failsafe que quedaron escritos en
+    # xfce4-session.xml cuando se probo esta via (plank y nm-applet con
+    # prioridad 40 y 45). Comprobado que NO se ejecutan nunca (sus comandos
+    # vienen compilados en el binario de xfce4-session), asi que no hacen
+    # falta... y si algun dia los ejecutaran, el plank de ahi (sin pgrep)
+    # mataria el dock del session-setup-script y lo haria parpadear. Se borran
+    # y Count vuelve a 5, que son los clientes compilados.
+    for _c in 5 6; do
+        for _p in Command Priority PerScreen; do
+            xfconf-query -c xfce4-session -r "/sessions/Failsafe/Client${_c}_${_p}" 2>/dev/null || true
+        done
+    done
+    xfconf-query -c xfce4-session -p /sessions/Failsafe/Count -s 5 2>/dev/null || true
+
     rm -f ~/.config/autostart/plank.desktop
     cat > ~/.config/autostart/00-plank.desktop << 'EOF'
 [Desktop Entry]
