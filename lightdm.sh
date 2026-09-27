@@ -225,34 +225,47 @@ lightdm_aplicar_fondo() {
 # nombre del equipo: la pantalla de inicio sin una sola palabra.
 brand=no
 background=/usr/share/backgrounds/linuxmint/macos-login.jpg
-user-background=no
+# OJO: en slick-greeter 2.2.6+zena la clave NO es "user-background" (esa no la
+# conoce y se ignora en silencio). La buena es "draw-user-backgrounds", y su
+# valor por defecto es TRUE: el greeter intenta pintar el ULTIMO FONDO DEL
+# USUARIO. Como el lo lanza el usuario `lightdm` y /home/natalia es 750, no
+# puede leerlo, se cae la imagen y sale background-color, que por defecto es
+# #000000 -> login en NEGRO. Con esto en false se usa el `background` de arriba,
+# que vive en /usr/share y puede leer cualquiera.
+draw-user-backgrounds=false
+background-color=#1c1c1e
 draw-grid=false
 show-hostname=false
 show-power=true
 show-a11y=true
 SEOF
-    # OJO: NO es "~/.config gana a /etc". El greeter lo arranca lightdm como
-    # ROOT (no existe usuario slick-greeter en el sistema), asi que su $HOME
-    # es /root: nunca leyo /home/natalia/.config/slick-greeter.conf. Ese
-    # fichero no servia para nada. El que manda es /etc/lightdm/slick-greeter.conf
-    # (de arriba), y ahora tambien /root/.config, que es donde si lo lee.
-    sudo mkdir -p /root/.config
-    sudo tee /root/.config/slick-greeter.conf >/dev/null << 'SEOF'
+    # El greeter lo arranca lightdm con el usuario `lightdm` (home
+    # /var/lib/lightdm), NO como root: por eso /root/.config no lo leia nunca
+    # y /home/natalia/.config tampoco. El que manda es
+    # /etc/lightdm/slick-greeter.conf (de arriba); este de aqui es por si
+    # arrancara como otro usuario.
+    local home_greeter
+    home_greeter=$(getent passwd lightdm 2>/dev/null | cut -d: -f6)
+    [ -n "$home_greeter" ] && [ -d "$home_greeter" ] || home_greeter=/var/lib/lightdm
+    sudo mkdir -p "$home_greeter/.config"
+    sudo tee "$home_greeter/.config/slick-greeter.conf" >/dev/null << 'SEOF'
 [Greeter]
 brand=no
 show-hostname=false
 background=/usr/share/backgrounds/linuxmint/macos-login.jpg
-user-background=no
+draw-user-backgrounds=false
+background-color=#1c1c1e
 draw-grid=false
 SEOF
-    # Se deja también en el usuario por si el greeter se llega a lanzar como
-    # usuario (lightdm --test-mode): es inofensivo y cubre ese caso.
+    # También en el usuario, por si el greeter se llega a lanzar como usuario
+    # (lightdm --test-mode): es inofensivo y cubre ese caso.
     cat > "$HOME/.config/slick-greeter.conf" << 'SEOF'
 [Greeter]
 brand=no
 show-hostname=false
 background=/usr/share/backgrounds/linuxmint/macos-login.jpg
-user-background=no
+draw-user-backgrounds=false
+background-color=#1c1c1e
 draw-grid=false
 SEOF
     # El greeter fijo en 99: gana a 60-lightdm-gtk-greeter y 90-slick-greeter,
@@ -270,7 +283,7 @@ SEOF
     sudo tee /etc/lightdm/lightdm-gtk-greeter.conf.d/99_linuxmint.conf >/dev/null << 'SEOF'
 [Greeter]
 background=/usr/share/backgrounds/linuxmint/macos-login.jpg
-user-background=true
+draw-user-backgrounds=false
 SEOF
     info "Fondo aplicado también en LightDM"
 }
